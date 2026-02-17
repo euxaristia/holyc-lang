@@ -1025,8 +1025,14 @@ void irLowerAst(IrCtx *ctx, Ast *ast) {
         case AST_ASM_FUNCALL:
         case AST_FUNPTR:
         case AST_FUNPTR_CALL:
-        case AST_BREAK:
-        case AST_CONTINUE:
+        case AST_BREAK: {
+            irJump(ctx->cur_func, ctx->cur_block, ctx->cur_func->exit_block);
+            break;
+        }
+        case AST_CONTINUE: {
+            irJump(ctx->cur_func, ctx->cur_block, ctx->cur_func->exit_block);
+            break;
+        }
         case AST_DEFAULT_PARAM:
         case AST_VAR_ARGS:
         case AST_ASM_FUNCDEF:
