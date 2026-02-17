@@ -988,7 +988,28 @@ void irLowerAst(IrCtx *ctx, Ast *ast) {
         case AST_FUNC:
         case AST_LITERAL:
         case AST_ARRAY_INIT:
-        case AST_WHILE:
+        case AST_WHILE: {
+            IrBlock *cond_block = irBlockNew();
+            IrBlock *body_block = irBlockNew();
+            IrBlock *end_block = irBlockNew();
+
+            irJump(ctx->cur_func, ctx->cur_block, cond_block);
+            irFnAddBlock(ctx->cur_func, cond_block);
+            ctx->cur_block = cond_block;
+
+            IrValue *cond = irExpr(ctx, ast->whilecond);
+            irBranch(ctx->cur_func, ctx->cur_block, cond, body_block, end_block);
+
+            irFnAddBlock(ctx->cur_func, body_block);
+            ctx->cur_block = body_block;
+            irLowerAst(ctx, ast->whilebody);
+            irJump(ctx->cur_func, ctx->cur_block, cond_block);
+
+            irFnAddBlock(ctx->cur_func, end_block);
+            ctx->cur_block = end_block;
+            break;
+        }
+
         case AST_CLASS_REF:
         case AST_ASM_STMT:
         case AST_ASM_FUNC_BIND:
@@ -1085,7 +1106,6 @@ void irMakeFunction(IrCtx *ctx, Ast *ast_func) {
         loggerWarning("%s\n", astToString(ast_var_args));
     }
 
-    irLowerAst(ctx, ast_func->body);
     IrBlock *exit_block = irBlockNew();
     IrInstr *ir_return_space = irAlloca(ast_func->type->rettype);
     irAddStackSpace(ctx, ast_func->type->rettype->size);
@@ -1096,6 +1116,8 @@ void irMakeFunction(IrCtx *ctx, Ast *ast_func) {
 
     func->exit_block = exit_block;
     irFnAddBlock(ctx->cur_func, exit_block);
+
+    irLowerAst(ctx, ast_func->body);
     irSimplifyFunction(func);
 }
 
