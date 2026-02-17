@@ -732,7 +732,68 @@ IrValue *irExpr(IrCtx *ctx, Ast *ast) {
             return value;
         }
 
-        case AST_UNOP:
+        case AST_UNOP: {
+            IrValue * operand = irExpr(ctx, ast->operand);
+            switch (ast->unop) {
+                case AST_UN_OP_PRE_INC: {
+                    IrValue *one = irConstInt(IR_TYPE_I64, 1);
+                    IrValue *result = irTmp(IR_TYPE_I64, 8);
+                    IrInstr *add = irInstrNew(IR_IADD, result, operand, one);
+                    irBlockAddInstr(ctx, add);
+                    IrInstr *store = irStore(operand, result);
+                    irBlockAddInstr(ctx, store);
+                    return result;
+                }
+                case AST_UN_OP_POST_INC: {
+                    IrValue *one = irConstInt(IR_TYPE_I64, 1);
+                    IrValue *result = irTmp(IR_TYPE_I64, 8);
+                    IrInstr *add = irInstrNew(IR_IADD, result, operand, one);
+                    irBlockAddInstr(ctx, add);
+                    IrInstr *store = irStore(operand, result);
+                    irBlockAddInstr(ctx, store);
+                    return operand;
+                }
+                case AST_UN_OP_PRE_DEC: {
+                    IrValue *one = irConstInt(IR_TYPE_I64, 1);
+                    IrValue *result = irTmp(IR_TYPE_I64, 8);
+                    IrInstr *sub = irInstrNew(IR_ISUB, result, operand, one);
+                    irBlockAddInstr(ctx, sub);
+                    IrInstr *store = irStore(operand, result);
+                    irBlockAddInstr(ctx, store);
+                    return result;
+                }
+                case AST_UN_OP_POST_DEC: {
+                    IrValue *one = irConstInt(IR_TYPE_I64, 1);
+                    IrValue *result = irTmp(IR_TYPE_I64, 8);
+                    IrInstr *sub = irInstrNew(IR_ISUB, result, operand, one);
+                    irBlockAddInstr(ctx, sub);
+                    IrInstr *store = irStore(operand, result);
+                    irBlockAddInstr(ctx, store);
+                    return operand;
+                }
+                case AST_UN_OP_MINUS: {
+                    IrValue *result = irTmp(IR_TYPE_I64, 8);
+                    IrInstr *neg = irInstrNew(IR_INEG, result, operand, NULL);
+                    irBlockAddInstr(ctx, neg);
+                    return result;
+                }
+                case AST_UN_OP_LOG_NOT: {
+                    IrValue *zero = irConstInt(IR_TYPE_I8, 0);
+                    IrValue *result = irTmp(IR_TYPE_I8, 1);
+                    IrInstr *cmp = irICmp(result, IR_CMP_EQ, operand, zero);
+                    irBlockAddInstr(ctx, cmp);
+                    return result;
+                }
+                case AST_UN_OP_BIT_NOT: {
+                    IrValue *result = irTmp(IR_TYPE_I64, 8);
+                    IrInstr *not = irInstrNew(IR_NOT, result, operand, NULL);
+                    irBlockAddInstr(ctx, not);
+                    return result;
+                }
+                default:
+                    loggerPanic("Unhandled unary op: %d\n", ast->unop);
+            }
+        }
 
         case AST_GVAR:
         case AST_GOTO:
@@ -823,9 +884,12 @@ void irLowerAst(IrCtx *ctx, Ast *ast) {
                         break;
                     }
 
-                    case AST_UNOP:
-                        loggerPanic("Unhandled: %s\n", astKindToString(init->kind));
+                    case AST_UNOP: {
+                        ir_init = irExpr(ctx, init);
+                        IrInstr *ir_store = irStore(local, ir_init);
+                        irBlockAddInstr(ctx, ir_store);
                         break;
+                    }
 
                     default: {
                         ir_init = irExpr(ctx, init);
@@ -852,6 +916,68 @@ void irLowerAst(IrCtx *ctx, Ast *ast) {
             break;
         }
 
+        case AST_IF: {
+            IrValue *cond = irExpr(ctx, ast->cond);
+            IrBlock *then_block = irBlockNew();
+            IrBlock *end_block = irBlockNew();
+            IrBlock *else_block = ast->els ? irBlockNew() : end_block;
+
+            irBranch(ctx->cur_func, ctx->cur_block, cond, then_block, else_block);
+            irFnAddBlock(ctx->cur_func, then_block);
+            ctx->cur_block = then_block;
+            irLowerAst(ctx, ast->then);
+            irJump(ctx->cur_func, ctx->cur_block, end_block);
+
+            if (ast->els) {
+                irFnAddBlock(ctx->cur_func, else_block);
+                ctx->cur_block = else_block;
+                irLowerAst(ctx, ast->els);
+                irJump(ctx->cur_func, ctx->cur_block, end_block);
+            }
+
+            irFnAddBlock(ctx->cur_func, end_block);
+            ctx->cur_block = end_block;
+            break;
+        }
+
+        case AST_FOR: {
+            IrBlock *cond_block = irBlockNew();
+            IrBlock *body_block = irBlockNew();
+            IrBlock *step_block = irBlockNew();
+            IrBlock *end_block = irBlockNew();
+
+            if (ast->forinit) {
+                irLowerAst(ctx, ast->forinit);
+            }
+
+            irJump(ctx->cur_func, ctx->cur_block, cond_block);
+            irFnAddBlock(ctx->cur_func, cond_block);
+            ctx->cur_block = cond_block;
+
+            if (ast->forcond) {
+                IrValue *cond = irExpr(ctx, ast->forcond);
+                irBranch(ctx->cur_func, ctx->cur_block, cond, body_block, end_block);
+            } else {
+                irJump(ctx->cur_func, ctx->cur_block, body_block);
+            }
+
+            irFnAddBlock(ctx->cur_func, body_block);
+            ctx->cur_block = body_block;
+            irLowerAst(ctx, ast->forbody);
+            irJump(ctx->cur_func, ctx->cur_block, step_block);
+
+            irFnAddBlock(ctx->cur_func, step_block);
+            ctx->cur_block = step_block;
+            if (ast->forstep) {
+                irLowerAst(ctx, ast->forstep);
+            }
+            irJump(ctx->cur_func, ctx->cur_block, cond_block);
+
+            irFnAddBlock(ctx->cur_func, end_block);
+            ctx->cur_block = end_block;
+            break;
+        }
+
         case AST_STRING:
             irExpr(ctx, ast);
             break;
@@ -862,8 +988,6 @@ void irLowerAst(IrCtx *ctx, Ast *ast) {
         case AST_FUNC:
         case AST_LITERAL:
         case AST_ARRAY_INIT:
-        case AST_IF:
-        case AST_FOR:
         case AST_WHILE:
         case AST_CLASS_REF:
         case AST_ASM_STMT:
@@ -887,7 +1011,6 @@ void irLowerAst(IrCtx *ctx, Ast *ast) {
         case AST_DEFAULT:
         case AST_SIZEOF:
         case AST_COMMENT:
-        case AST_UNOP:
             loggerPanic("Unhandled Ast kind `%s`\n%s\n",
                     astKindToString(ast->kind),
                     astToString(ast));
