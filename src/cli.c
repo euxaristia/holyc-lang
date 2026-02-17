@@ -88,6 +88,7 @@ static CliParser parsers[] = {
     {str_lit("-o-"),        0, CLI_TO_STDOUT, "-o-", "Output assembly to stdout, only for use with -S", &cliParseNop},
     {str_lit("-transpile"), 0, CLI_TRANSPILE, "-transpile", "Transpile the code to C, this is best effort", &cliParseNop},
     {str_lit("-D"),         0, CLI_DEFINES_LIST, "-D<VAR>", "Set a compiler #define (does not accept a value)", &cliParseDefine},
+    {str_lit("-target"),    1, CLI_TARGET_ARCH, "-target <arch>", "Set target architecture (x86_64, aarch64)", &cliParseString},
     {str_lit("--dump-ir"),  0, CLI_DUMP_IR, "--dump-ir", "Dump ir to stdout" , &cliParseNop},
     {str_lit("--mem-stats"),  0, CLI_MEM_STATS, "--mem-stats", "Stats about memory usage when compiling" , &cliParseNop},
     {str_lit("--version"),  0, CLI_VERSION, "--version", "Print the version of the compiler", &cliParseNop},
@@ -408,6 +409,12 @@ int cliParseArgs(CliArgs *args, int argc, char **argv) {
             case CLI_HELP:    cliPrintUsage(); break;
             case CLI_VERSION: cliVersionPrint(args); break;
             case CLI_TERRY:   cliTerryInfo(); break;
+            case CLI_TARGET_ARCH:
+                if (strcmp(value.str, "x86_64") != 0 && strcmp(value.str, "aarch64") != 0) {
+                    cliPanic("Invalid target architecture: '%s'. Supported: x86_64, aarch64\n", value.str);
+                }
+                args->target_arch = mprintf("%s", value.str);
+                break;
         }
     }
 

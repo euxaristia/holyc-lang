@@ -298,6 +298,7 @@ void aarch64EmitFunction(AArch64Ctx *ctx, IrFunction *func) {
 AoStr *aarch64GenCode(IrCtx *ir_ctx) {
     IrProgram *program = ir_ctx->prog;
     AArch64Ctx *ctx = aarch64CtxNew(program);
+    aoStrCatPrintf(ctx->buf, ".text\n\t");
     for (u64 i = 0; i < program->functions->size; ++i) {
         IrFunction *func = program->functions->entries[i];
         aarch64EmitFunction(ctx, func);

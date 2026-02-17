@@ -33,6 +33,7 @@ enum CliArgType {
     CLI_DUMP_IR,
     CLI_HELP,
     CLI_TERRY,
+    CLI_TARGET_ARCH,
 };
 
 typedef struct CliValue {
@@ -79,6 +80,7 @@ typedef struct CliArgs {
     char *output_filename;
     char *clibs;
     char *install_dir;
+    char *target_arch;
     List *defines_list;
 } CliArgs;
 

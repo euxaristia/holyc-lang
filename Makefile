@@ -1,7 +1,9 @@
 C_COMPILER     ?= gcc
 BUILD_TYPE     ?= Release
 INSTALL_PREFIX ?= /usr/local
-CFLAGS         ?= '-Wextra -Wall -Wpedantic'
+CFLAGS         ?= -Wextra -Wall -Wpedantic
+TARGET_ARCH    ?=
+EXTRA_CFLAGS   ?=
 
 default: all
 
@@ -17,6 +19,8 @@ default: all
 #		&& $(MAKE) -C ./build -j2
 #```
 
+# Cross-compile for aarch64 (requires aarch64-linux-gnu-gcc):
+#   make C_COMPILER=aarch64-linux-gnu-gcc TARGET_ARCH=aarch64 clean all
 all:
 	cmake -S ./src \
 		-B ./build \
@@ -24,7 +28,7 @@ all:
 		-DCMAKE_C_COMPILER=$(C_COMPILER) \
 		-DCMAKE_BUILD_TYPE=$(BUILD_TYPE) \
 		-DCMAKE_INSTALL_PREFIX=$(INSTALL_PREFIX) \
-		-DCMAKE_C_FLAGS=$(CFLAGS) \
+		-DCMAKE_C_FLAGS="$(CFLAGS) $(EXTRA_CFLAGS)" \
 		&& $(MAKE) -C ./build -j2
 
 install:

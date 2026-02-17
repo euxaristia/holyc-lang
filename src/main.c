@@ -47,6 +47,17 @@ int is_terminal;
 #define CLIBS CLIBS_BASE
 #endif
 
+char *getCompilerCmd(const char *target_arch) {
+    if (target_arch && strcmp(target_arch, "aarch64") == 0) {
+#if defined(__APPLE__)
+        return "clang --target=aarch64-apple-darwin";
+#else
+        return "gcc -march=aarch64";
+#endif
+    }
+    return _CC;
+}
+
 void safeSystem(const char *cmd) {
     int ok = system(cmd);
     if (ok != 0) {
@@ -155,11 +166,12 @@ int writeAsmToTmp(AoStr *asmbuf) {
 
 void emitFile(AoStr *asmbuf, CliArgs *args) {
     AoStr *cmd = aoStrNew();
+    char *cc = getCompilerCmd(args->target_arch);
     hccLib lib;
     if (args->emit_object) {
         writeAsmToTmp(asmbuf);
-        aoStrCatPrintf(cmd, _CC" -c %s "CLIBS" %s -o ./%s",
-                ASM_TMP_FILE,args->clibs,args->obj_outfile);
+        aoStrCatPrintf(cmd, "%s -c %s "CLIBS" %s -o ./%s",
+                cc, ASM_TMP_FILE,args->clibs,args->obj_outfile);
         safeSystem(cmd->data);
     } else if (args->asm_outfile && args->assemble_only) {
         int fd;
@@ -185,8 +197,8 @@ void emitFile(AoStr *asmbuf, CliArgs *args) {
     } else if (args->emit_dylib) {
         writeAsmToTmp(asmbuf);
         hccLibInit(&lib,args,args->lib_name);
-        aoStrCatPrintf(cmd, _CC" -fPIC -c %s -o ./%s",
-                ASM_TMP_FILE,args->obj_outfile);
+        aoStrCatPrintf(cmd, "%s -fPIC -c %s -o ./%s",
+                cc, ASM_TMP_FILE,args->obj_outfile);
         fprintf(stderr,"%s\n",cmd->data);
         safeSystem(cmd->data);
         fprintf(stderr,"%s\n",lib.stylib_cmd);
@@ -203,8 +215,8 @@ void emitFile(AoStr *asmbuf, CliArgs *args) {
         if (args->run) {
             AoStr *run_cmd = aoStrNew();
             writeAsmToTmp(asmbuf);
-            aoStrCatPrintf(run_cmd,_CC" -L"INSTALL_PREFIX"/lib %s "CLIBS" && ./a.out && rm ./a.out",
-                    ASM_TMP_FILE);
+            aoStrCatPrintf(run_cmd,"%s -L"INSTALL_PREFIX"/lib %s "CLIBS" && ./a.out && rm ./a.out",
+                    cc, ASM_TMP_FILE);
             /* Don't use 'safeSystem' else anything other than a '0' exit 
              * code will cause a panic which is incorrect... This is a bit of a
              * hack as run, in an ideal world, would not be calling out to `_CC` */
@@ -221,11 +233,11 @@ void emitFile(AoStr *asmbuf, CliArgs *args) {
         }
 
         if (args->clibs) {
-            aoStrCatPrintf(cmd, _CC" -L"INSTALL_PREFIX"/lib %s %s "CLIBS" -o %s", 
-                    ASM_TMP_FILE,args->clibs,args->output_filename);
+            aoStrCatPrintf(cmd, "%s -L"INSTALL_PREFIX"/lib %s %s "CLIBS" -o %s", 
+                    cc, ASM_TMP_FILE,args->clibs,args->output_filename);
         } else {
-            aoStrCatPrintf(cmd, _CC" -L"INSTALL_PREFIX"/lib %s "CLIBS" -o %s", 
-                    ASM_TMP_FILE, args->output_filename);
+            aoStrCatPrintf(cmd, "%s -L"INSTALL_PREFIX"/lib %s "CLIBS" -o %s", 
+                    cc, ASM_TMP_FILE, args->output_filename);
         }
         safeSystem(cmd->data);
     }
@@ -239,6 +251,7 @@ void emitFile(AoStr *asmbuf, CliArgs *args) {
 
 void assemble(CliArgs *args) {
     AoStr *run_cmd = aoStrNew();
+    char *cc = getCompilerCmd(args->target_arch);
 
     if (args->run) {
         s64 len = 0;
@@ -249,13 +262,13 @@ void assemble(CliArgs *args) {
             .capacity = len,
         };
         writeAsmToTmp(&asm_buf);
-        aoStrCatPrintf(run_cmd,_CC" -L"INSTALL_PREFIX"/lib %s "CLIBS" && ./a.out && rm ./a.out",
-                ASM_TMP_FILE);
+        aoStrCatPrintf(run_cmd,"%s -L"INSTALL_PREFIX"/lib %s "CLIBS" && ./a.out && rm ./a.out",
+                cc, ASM_TMP_FILE);
         free(buffer);
         int ret = system(run_cmd->data);
         (void)ret;
     } else {
-        aoStrCatPrintf(run_cmd, _CC" %s -L"INSTALL_PREFIX"/lib "CLIBS, args->infile);
+        aoStrCatPrintf(run_cmd, "%s %s -L"INSTALL_PREFIX"/lib "CLIBS, cc, args->infile);
         safeSystem(run_cmd->data);
     }
     aoStrRelease(run_cmd);
@@ -357,14 +370,18 @@ int main(int argc, char **argv) {
         goto success;
     }
 
+    int use_aarch64 = args.target_arch && strcmp(args.target_arch, "aarch64") == 0;
 #if IS_ARM_64 && defined(__USE_NEW_BACKEND__)
-    IrCtx *ir_ctx = irLowerProgram(cc);
-    asmbuf = aarch64GenCode(ir_ctx);
-    printf("%s\n", asmbuf->data);
-#else
-    asmbuf = compileToAsm(cc);
-    emitFile(asmbuf, &args);
-#endif // IS_ARM_64
+    use_aarch64 = 1;
+#endif
+    if (use_aarch64) {
+        IrCtx *ir_ctx = irLowerProgram(cc);
+        asmbuf = aarch64GenCode(ir_ctx);
+        emitFile(asmbuf, &args);
+    } else {
+        asmbuf = compileToAsm(cc);
+        emitFile(asmbuf, &args);
+    }
     if (args.defines_list) {
         listRelease(args.defines_list,NULL);
     }
