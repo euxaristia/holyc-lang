@@ -196,30 +196,133 @@ void aarch64GenInstr(AArch64Ctx *ctx, IrInstr *instr, IrInstr *next_instr) {
         }
 
         case IR_GEP:
-        case IR_ISUB:
-        case IR_IMUL:
+        case IR_ISUB: {
+            aoStrCatFmt(ctx->buf, "sub x8, x0, x1\n\t");
+            aarch64ClearIntRegisters(ctx);
+            break;
+        }
+
+        case IR_IMUL: {
+            aoStrCatFmt(ctx->buf, "mul x8, x0, x1\n\t");
+            aarch64ClearIntRegisters(ctx);
+            break;
+        }
+
         case IR_IDIV:
-        case IR_UDIV:
+        case IR_UDIV: {
+            aoStrCatFmt(ctx->buf, "sdiv x8, x0, x1\n\t");
+            aarch64ClearIntRegisters(ctx);
+            break;
+        }
+
         case IR_IREM:
-        case IR_UREM:
-        case IR_INEG:
-        case IR_FADD:
-        case IR_FSUB:
-        case IR_FMUL:
-        case IR_FDIV:
-        case IR_FNEG:
-        case IR_AND:
-        case IR_OR:
-        case IR_XOR:
-        case IR_SHL:
+        case IR_UREM: {
+            aoStrCatFmt(ctx->buf, "udiv x9, x0, x1\n\t");
+            aoStrCatFmt(ctx->buf, "msub x8, x9, x1, x0\n\t");
+            aarch64ClearIntRegisters(ctx);
+            break;
+        }
+
+        case IR_INEG: {
+            aoStrCatFmt(ctx->buf, "neg x8, x0\n\t");
+            aarch64ClearIntRegisters(ctx);
+            break;
+        }
+
+        case IR_AND: {
+            aoStrCatFmt(ctx->buf, "and x8, x0, x1\n\t");
+            aarch64ClearIntRegisters(ctx);
+            break;
+        }
+
+        case IR_OR: {
+            aoStrCatFmt(ctx->buf, "orr x8, x0, x1\n\t");
+            aarch64ClearIntRegisters(ctx);
+            break;
+        }
+
+        case IR_XOR: {
+            aoStrCatFmt(ctx->buf, "eor x8, x0, x1\n\t");
+            aarch64ClearIntRegisters(ctx);
+            break;
+        }
+
+        case IR_SHL: {
+            aoStrCatFmt(ctx->buf, "lsl x8, x0, x1\n\t");
+            aarch64ClearIntRegisters(ctx);
+            break;
+        }
+
         case IR_SHR:
-        case IR_SAR:
-        case IR_NOT:
-        case IR_ICMP:
-        case IR_FCMP:
-        case IR_TRUNC:
+        case IR_SAR: {
+            aoStrCatFmt(ctx->buf, "lsr x8, x0, x1\n\t");
+            aarch64ClearIntRegisters(ctx);
+            break;
+        }
+
+        case IR_NOT: {
+            aoStrCatFmt(ctx->buf, "mvn x8, x0\n\t");
+            aarch64ClearIntRegisters(ctx);
+            break;
+        }
+
+        case IR_ICMP: {
+            aoStrCatFmt(ctx->buf, "cmp x0, x1\n\t");
+            aoStrCatFmt(ctx->buf, "cset x8, ne\n\t");
+            aarch64ClearIntRegisters(ctx);
+            break;
+        }
+
+        case IR_FADD: {
+            aoStrCatFmt(ctx->buf, "fadd d8, d0, d1\n\t");
+            aarch64ClearIntRegisters(ctx);
+            break;
+        }
+
+        case IR_FSUB: {
+            aoStrCatFmt(ctx->buf, "fsub d8, d0, d1\n\t");
+            aarch64ClearIntRegisters(ctx);
+            break;
+        }
+
+        case IR_FMUL: {
+            aoStrCatFmt(ctx->buf, "fmul d8, d0, d1\n\t");
+            aarch64ClearIntRegisters(ctx);
+            break;
+        }
+
+        case IR_FDIV: {
+            aoStrCatFmt(ctx->buf, "fdiv d8, d0, d1\n\t");
+            aarch64ClearIntRegisters(ctx);
+            break;
+        }
+
+        case IR_FNEG: {
+            aoStrCatFmt(ctx->buf, "fneg d8, d0\n\t");
+            aarch64ClearIntRegisters(ctx);
+            break;
+        }
+
+        case IR_FCMP: {
+            aoStrCatFmt(ctx->buf, "fcmp d0, d1\n\t");
+            aoStrCatFmt(ctx->buf, "cset w8, ne\n\t");
+            aarch64ClearIntRegisters(ctx);
+            break;
+        }
+
         case IR_ZEXT:
-        case IR_SEXT:
+        case IR_SEXT: {
+            aoStrCatFmt(ctx->buf, "mov x8, x0\n\t");
+            aarch64ClearIntRegisters(ctx);
+            break;
+        }
+
+        case IR_TRUNC: {
+            aoStrCatFmt(ctx->buf, "mov w8, w0\n\t");
+            aarch64ClearIntRegisters(ctx);
+            break;
+        }
+
         case IR_FPTRUNC:
         case IR_FPEXT:
         case IR_FPTOUI:
@@ -228,14 +331,37 @@ void aarch64GenInstr(AArch64Ctx *ctx, IrInstr *instr, IrInstr *next_instr) {
         case IR_SITOFP:
         case IR_PTRTOINT:
         case IR_INTTOPTR:
-        case IR_BITCAST:
-        case IR_RET:
-        case IR_BR:
-        case IR_JMP:
+        case IR_BITCAST: {
+            aoStrCatFmt(ctx->buf, "mov x8, x0\n\t");
+            aarch64ClearIntRegisters(ctx);
+            break;
+        }
+
+        case IR_RET: {
+            if (instr->r1) {
+                aoStrCatFmt(ctx->buf, "mov x0, x8\n\t");
+            }
+            aoStrCatFmt(ctx->buf, "add sp, sp, #16\n\t");
+            aoStrCatFmt(ctx->buf, "ret\n\t");
+            break;
+        }
+
+        case IR_BR: {
+            IrBlock *true_block = instr->extra.blocks.target_block;
+            aoStrCatFmt(ctx->buf, "cbz x0, .L%u\n\t", true_block->id);
+            aoStrCatFmt(ctx->buf, "b .Lfallthrough\n\t");
+            break;
+        }
+
+        case IR_JMP: {
+            IrBlock *target = instr->extra.blocks.target_block;
+            aoStrCatFmt(ctx->buf, "b .L%u\n\t", target->id);
+            break;
+        }
+
         case IR_LOOP:
         case IR_SWITCH:
         case IR_PHI:
-        case IR_LABEL:
         case IR_SELECT:
         case IR_VA_ARG:
         case IR_VA_START:

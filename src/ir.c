@@ -742,7 +742,6 @@ IrValue *irExpr(IrCtx *ctx, Ast *ast) {
         case AST_ARRAY_INIT:
         case AST_IF:
         case AST_FOR:
-        case AST_RETURN:
         case AST_WHILE:
         case AST_CLASS_REF:
         case AST_COMPOUND_STMT:
@@ -843,6 +842,16 @@ void irLowerAst(IrCtx *ctx, Ast *ast) {
             irExpr(ctx, ast);
             break;
 
+        case AST_RETURN: {
+            if (ast->retval) {
+                IrValue *ir_ret = irExpr(ctx, ast->retval);
+                IrInstr *ir_store = irStore(ctx->cur_func->return_value, ir_ret);
+                irBlockAddInstr(ctx, ir_store);
+            }
+            irJump(ctx->cur_func, ctx->cur_block, ctx->cur_func->exit_block);
+            break;
+        }
+
         case AST_STRING:
             irExpr(ctx, ast);
             break;
@@ -855,7 +864,6 @@ void irLowerAst(IrCtx *ctx, Ast *ast) {
         case AST_ARRAY_INIT:
         case AST_IF:
         case AST_FOR:
-        case AST_RETURN:
         case AST_WHILE:
         case AST_CLASS_REF:
         case AST_ASM_STMT:
