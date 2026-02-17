@@ -790,6 +790,15 @@ IrValue *irExpr(IrCtx *ctx, Ast *ast) {
                     irBlockAddInstr(ctx, not);
                     return result;
                 }
+                case AST_UN_OP_ADDR_OF: {
+                    return operand;
+                }
+                case AST_UN_OP_DEREF: {
+                    IrValue *result = irTmp(IR_TYPE_I64, 8);
+                    IrInstr *load = irLoad(result, operand);
+                    irBlockAddInstr(ctx, load);
+                    return result;
+                }
                 default:
                     loggerPanic("Unhandled unary op: %d\n", ast->unop);
             }

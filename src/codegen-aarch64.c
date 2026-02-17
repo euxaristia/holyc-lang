@@ -100,6 +100,12 @@ void aarch64GenInstr(AArch64Ctx *ctx, IrInstr *instr, IrInstr *next_instr) {
                     aoStrCatFmt(ctx->buf, "str x8, [sp, #%u]\n\t", offset);
                     break;
                 }
+                case IR_TYPE_PTR: {
+                    u32 offset = aarch64CtxGetVarOffset(ctx, instr->dst->as.var.id);
+                    assert(offset != 0);
+                    aoStrCatFmt(ctx->buf, "str x8, [sp, #%u]\n\t", offset);
+                    break;
+                }
                 case IR_TYPE_I8:
                 case IR_TYPE_I16:
                 case IR_TYPE_I32:
@@ -109,7 +115,6 @@ void aarch64GenInstr(AArch64Ctx *ctx, IrInstr *instr, IrInstr *next_instr) {
                 case IR_TYPE_STRUCT:
                 case IR_TYPE_FUNCTION:
                 case IR_TYPE_ASM_FUNCTION:
-                case IR_TYPE_PTR:
                 case IR_TYPE_LABEL:
                 default:
                     loggerPanic("Unhandled Type: %s\n",
@@ -127,6 +132,13 @@ void aarch64GenInstr(AArch64Ctx *ctx, IrInstr *instr, IrInstr *next_instr) {
                     aoStrCatFmt(ctx->buf, "ldr x%u, [sp, #%u]\n\t", reg, offset);
                     break;
                 }
+                case IR_TYPE_PTR: {
+                    u32 offset = aarch64CtxGetVarOffset(ctx, instr->r1->as.var.id);
+                    u32 reg = aarch64GetIntRegister(ctx);
+                    assert(offset != 0);
+                    aoStrCatFmt(ctx->buf, "ldr x%u, [sp, #%u]\n\t", reg, offset);
+                    break;
+                }
                 case IR_TYPE_I8:
                 case IR_TYPE_I16:
                 case IR_TYPE_I32:
@@ -136,7 +148,6 @@ void aarch64GenInstr(AArch64Ctx *ctx, IrInstr *instr, IrInstr *next_instr) {
                 case IR_TYPE_STRUCT:
                 case IR_TYPE_FUNCTION:
                 case IR_TYPE_ASM_FUNCTION:
-                case IR_TYPE_PTR:
                 case IR_TYPE_LABEL:
                 default:
                     loggerPanic("Unhandled Type: %s\n",
@@ -171,13 +182,17 @@ void aarch64GenInstr(AArch64Ctx *ctx, IrInstr *instr, IrInstr *next_instr) {
                         break;
                     }
 
+                    case IR_VAL_CONST_INT: {
+                        aoStrCatFmt(ctx->buf, "mov x%U, #%I\n\t", i, arm->as._i64);
+                        break;
+                    }
+
                     case IR_VAL_TMP: {
                         /* @TODO - should eliminate temporaries */
                         aoStrCatFmt(ctx->buf, "ldr x%U, [sp, #-420]\n\t", i);
                         break;
                     }
 
-                    case IR_VAL_CONST_INT:
                     case IR_VAL_CONST_FLOAT:
                     case IR_VAL_GLOBAL:
                     case IR_VAL_PARAM:
@@ -185,7 +200,6 @@ void aarch64GenInstr(AArch64Ctx *ctx, IrInstr *instr, IrInstr *next_instr) {
                     case IR_VAL_LABEL:
                     case IR_VAL_UNDEFINED:
                     case IR_VAL_UNRESOLVED:
-                    default:
                         loggerPanic("Unhandled argument kind: %s\n",
                                 irValueKindToString(arm->kind));
                 }
