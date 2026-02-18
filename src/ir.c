@@ -590,7 +590,7 @@ IrValue *irBinOpExpr(IrCtx *ctx, Ast *ast) {
                 loggerPanic("Op `%s` not handled for float \n",
                         astBinOpKindToString(ast->binop));
         }
-    } else if (irIsInt(ir_type)) {
+    } else if (irIsInt(ir_type) || irIsPtr(ir_type)) {
         switch (ast->binop) {
             case AST_BIN_OP_ADD:
                 op = IR_IADD;
@@ -632,7 +632,9 @@ IrValue *irBinOpExpr(IrCtx *ctx, Ast *ast) {
                 break;
             case AST_BIN_OP_LT:
                 op = IR_ICMP;
-                if (ast->type->issigned) {
+                if (irIsPtr(ir_type)) {
+                    cmp = IR_CMP_ULT;
+                } else if (ast->type->issigned) {
                     cmp = IR_CMP_LT;
                 } else {
                     cmp = IR_CMP_ULT;
@@ -640,7 +642,9 @@ IrValue *irBinOpExpr(IrCtx *ctx, Ast *ast) {
                 break;
             case AST_BIN_OP_LE:
                 op = IR_ICMP;
-                if (ast->type->issigned) {
+                if (irIsPtr(ir_type)) {
+                    cmp = IR_CMP_ULE;
+                } else if (ast->type->issigned) {
                     cmp = IR_CMP_LE;
                 } else {
                     cmp = IR_CMP_ULE;
@@ -648,7 +652,9 @@ IrValue *irBinOpExpr(IrCtx *ctx, Ast *ast) {
                 break;
             case AST_BIN_OP_GT:
                 op = IR_ICMP;
-                if (ast->type->issigned) {
+                if (irIsPtr(ir_type)) {
+                    cmp = IR_CMP_UGT;
+                } else if (ast->type->issigned) {
                     cmp = IR_CMP_GT;
                 } else {
                     cmp = IR_CMP_UGT;
@@ -656,7 +662,9 @@ IrValue *irBinOpExpr(IrCtx *ctx, Ast *ast) {
                 break;
             case AST_BIN_OP_GE:
                 op = IR_ICMP;
-                if (ast->type->issigned) {
+                if (irIsPtr(ir_type)) {
+                    cmp = IR_CMP_UGE;
+                } else if (ast->type->issigned) {
                     cmp = IR_CMP_GE;
                 } else {
                     cmp = IR_CMP_UGE;
