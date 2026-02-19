@@ -26,8 +26,12 @@
 
 int is_terminal;
 
-#if defined(__aarch64__) || defined(__arm64ec__)
-    #define _CC "clang --target=x86_64-apple-darwin"
+#if defined(__APPLE__)
+    #if defined(__aarch64__) || defined(__arm64ec__)
+        #define _CC "clang --target=x86_64-apple-darwin"
+    #else
+        #define _CC "clang"
+    #endif
 #else
     #define _CC "gcc"
 #endif
@@ -51,8 +55,10 @@ char *getCompilerCmd(const char *target_arch) {
     if (target_arch && strcmp(target_arch, "aarch64") == 0) {
 #if defined(__APPLE__)
         return "clang --target=aarch64-apple-darwin";
+#elif defined(__aarch64__) || defined(__arm64ec__)
+        return "gcc";
 #else
-        return "gcc -march=aarch64";
+        return "aarch64-linux-gnu-gcc";
 #endif
     }
     return _CC;
@@ -100,6 +106,7 @@ int hccLibInit(hccLib *lib, CliArgs *args, char *name) {
             args->obj_outfile);
 
     aoStrCatPrintf(installcmd,
+            "mkdir -p "INSTALL_PREFIX"/lib && "
             "cp -pPR ./%s "INSTALL_PREFIX"/lib/lib%s && "
             "ln -sf "INSTALL_PREFIX"/lib/%s "INSTALL_PREFIX"/lib/%s",
             lib->dylib_name,
@@ -119,6 +126,7 @@ int hccLibInit(hccLib *lib, CliArgs *args, char *name) {
             lib->dylib_name);
     aoStrCatPrintf(dylib_cmd," -o %s %s",lib->dylib_name,args->obj_outfile);
     aoStrCatPrintf(installcmd,
+            "mkdir -p "INSTALL_PREFIX"/lib && "
             "cp -pPR ./%s "INSTALL_PREFIX"/lib/lib%s",
             lib->stylib_name,lib->stylib_name);
 #else

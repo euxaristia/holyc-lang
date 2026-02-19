@@ -119,8 +119,23 @@ install(TARGETS hcc DESTINATION ${CMAKE_INSTALL_PREFIX}/bin)
 install(FILES ${CMAKE_SOURCE_DIR}/holyc-lib/tos.HH DESTINATION ${CMAKE_INSTALL_PREFIX}/include)
 
 # Custom installation step to run `hcc` during install
-if (DEFINED HCC_LINK_SQLITE3)
-    install(CODE "execute_process(COMMAND \"${HCC_PATH}\" -DHCC_LINK_SQLITE3 -lib tos ${CMAKE_SOURCE_DIR}/holyc-lib/all.HC WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/holyc-lib)")
-else()
-    install(CODE "execute_process(COMMAND \"${HCC_PATH}\" -lib tos ${CMAKE_SOURCE_DIR}/holyc-lib/all.HC WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/holyc-lib)")
+set(HCC_INSTALL_TARGET "")
+if (CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
+    set(HCC_INSTALL_TARGET "-target;aarch64")
 endif()
+
+set(HCC_INSTALL_DEFINES "")
+if (DEFINED HCC_LINK_SQLITE3)
+    set(HCC_INSTALL_DEFINES "-DHCC_LINK_SQLITE3")
+endif()
+
+install(CODE "
+    execute_process(
+        COMMAND \"${HCC_PATH}\" ${HCC_INSTALL_TARGET} ${HCC_INSTALL_DEFINES} -lib tos ${CMAKE_SOURCE_DIR}/holyc-lib/all.HC
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/holyc-lib
+        RESULT_VARIABLE HCC_LIB_RESULT
+    )
+    if (NOT HCC_LIB_RESULT EQUAL 0)
+        message(FATAL_ERROR \"Failed to build tos runtime library during install (exit \${HCC_LIB_RESULT})\")
+    endif()
+")

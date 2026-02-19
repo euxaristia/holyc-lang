@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <assert.h>
 
 #include "aostr.h"
@@ -118,6 +119,15 @@ int aarch64IsFloatType(IrValueType type) {
     return type == IR_TYPE_F64;
 }
 
+static AoStr *aarch64NormaliseFunctionName(AoStr *name) {
+    AoStr *normalised = aoStrDup(name);
+    if (normalised && normalised->len >= 4 &&
+        strncasecmp(normalised->data, "Main", 4) == 0) {
+        aoStrToLowerCase(normalised);
+    }
+    return normalised;
+}
+
 void aarch64CollectConstStringValue(AArch64Ctx *ctx, IrValue *value) {
     if (!value) return;
 
@@ -228,6 +238,11 @@ void aarch64LoadIntValue(AArch64Ctx *ctx, IrValue *value, u32 reg) {
                 case IR_TYPE_ASM_FUNCTION:
                 case IR_TYPE_LABEL:
                     aoStrCatFmt(ctx->buf, "ldr x%u, [sp, #%u]\n\t", reg, offset);
+                    return;
+                case IR_TYPE_VOID:
+                    /* Defensive fallback: void-typed temporaries can leak
+                     * into lowered IR; materialize a neutral value. */
+                    aoStrCatFmt(ctx->buf, "mov x%u, #0\n\t", reg);
                     return;
                 case IR_TYPE_F64:
                     aoStrCatFmt(ctx->buf, "ldr d15, [sp, #%u]\n\t", offset);
@@ -504,7 +519,9 @@ void aarch64GenInstr(AArch64Ctx *ctx, IrInstr *instr, IrInstr *next_instr, IrBlo
                 }
             }
 
-            aoStrCatFmt(ctx->buf, "bl %S\n\t", args->label);
+            AoStr *target_name = aarch64NormaliseFunctionName(args->label);
+            aoStrCatFmt(ctx->buf, "bl %S\n\t", target_name);
+            aoStrRelease(target_name);
             if (call_stack_size) {
                 aoStrCatFmt(ctx->buf, "add sp, sp, #%u\n\t", call_stack_size);
             }
@@ -868,8 +885,10 @@ void aarch64GenInstr(AArch64Ctx *ctx, IrInstr *instr, IrInstr *next_instr, IrBlo
 }
 
 void aarch64EmitFunction(AArch64Ctx *ctx, IrFunction *func) {
+    AoStr *func_name = aarch64NormaliseFunctionName(func->name);
     aoStrCatFmt(ctx->buf, ".globl %S\n"
-                          "%S:\n\t", func->name, func->name);
+                          "%S:\n\t", func_name, func_name);
+    aoStrRelease(func_name);
 
     u16 local_stack_size = (u16)alignTo(func->stack_space, 16);
     ctx->stack_size = local_stack_size;
