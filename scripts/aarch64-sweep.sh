@@ -58,7 +58,10 @@ while IFS= read -r -d '' file; do
   out="/tmp/hcc-a64-${name}.out"
   err="/tmp/hcc-a64-${name}.err"
   asm="$(mktemp "/tmp/hcc-a64-${name}.XXXXXX.s")"
-  obj="$(mktemp "/tmp/hcc-a64-${name}.XXXXXX.o")"
+  obj=""
+  if [[ "$HCC_AARCH64_ASSEMBLE" == "1" ]]; then
+    obj="$(mktemp "/tmp/hcc-a64-${name}.XXXXXX.o")"
+  fi
 
   hcc_args=(-target aarch64 -S "$name" -o "$asm")
   if [[ "$name" == "32_sql.HC" && "$HCC_ENABLE_SQLITE_TEST" == "1" ]]; then
@@ -77,6 +80,7 @@ while IFS= read -r -d '' file; do
       if [[ "$STOP_ON_FAIL" == "1" ]]; then
         break
       fi
+      rm -f "$asm" "$obj"
       continue
     fi
     if [[ "$HCC_AARCH64_ASSEMBLE" == "1" ]]; then
