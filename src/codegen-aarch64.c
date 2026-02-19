@@ -374,7 +374,50 @@ void aarch64GenStore(AArch64Ctx *ctx, IrValue *dest, char *reg) {
     }
 }
 
-void aarch64GenInstr(AArch64Ctx *ctx, IrInstr *instr, IrInstr *next_instr) {
+IrPair *aarch64FindPhiIncoming(IrInstr *phi, IrBlock *from_block) {
+    if (!phi || phi->op != IR_PHI || !phi->extra.phi_pairs) return NULL;
+    for (u64 i = 0; i < phi->extra.phi_pairs->size; ++i) {
+        IrPair *pair = vecGet(IrPair *, phi->extra.phi_pairs, i);
+        if (pair->ir_block == from_block) {
+            return pair;
+        }
+    }
+    return NULL;
+}
+
+u32 aarch64CountPhiCopiesForEdge(IrBlock *target_block, IrBlock *from_block) {
+    u32 count = 0;
+    listForEach(target_block->instructions) {
+        IrInstr *instr = listValue(IrInstr *, it);
+        if (instr->op != IR_PHI) continue;
+        if (aarch64FindPhiIncoming(instr, from_block)) {
+            count++;
+        }
+    }
+    return count;
+}
+
+void aarch64EmitPhiCopiesForEdge(AArch64Ctx *ctx,
+                                 IrBlock *target_block,
+                                 IrBlock *from_block)
+{
+    listForEach(target_block->instructions) {
+        IrInstr *phi = listValue(IrInstr *, it);
+        if (phi->op != IR_PHI) continue;
+        IrPair *incoming = aarch64FindPhiIncoming(phi, from_block);
+        if (!incoming || !phi->dst) continue;
+
+        if (aarch64IsFloatType(phi->dst->type)) {
+            aarch64LoadFloatValue(ctx, incoming->ir_value, 15);
+            aarch64StoreFloatValue(ctx, phi->dst, 15);
+        } else {
+            aarch64LoadIntValue(ctx, incoming->ir_value, 15);
+            aarch64StoreIntValue(ctx, phi->dst, 15);
+        }
+    }
+}
+
+void aarch64GenInstr(AArch64Ctx *ctx, IrInstr *instr, IrInstr *next_instr, IrBlock *cur_block) {
     (void)next_instr;
     switch (instr->op) {
         case IR_NOP:
@@ -414,71 +457,60 @@ void aarch64GenInstr(AArch64Ctx *ctx, IrInstr *instr, IrInstr *next_instr) {
 
         case IR_CALL: {
             IrValueArray *args = &instr->r1->as.array;
+            u32 gp_reg = 0;
+            u32 fp_reg = 0;
+            u32 stack_bytes = 0;
             for (u64 i = 0; i < args->values->size; ++i) {
                 IrValue *arm = args->values->entries[i];
-                switch (arm->kind) {
-                    case IR_VAL_CONST_STR: {
-                        aoStrCatFmt(ctx->buf, "adrp x%U, %S\n\t"
-                                              "add x%U, x%U, :lo12:%S\n\t",
-                                              i, arm->as.str.label,
-                                              i, i, arm->as.str.label);
-                        break;
+                if (aarch64IsFloatType(arm->type)) {
+                    if (fp_reg < 8) {
+                        fp_reg++;
+                    } else {
+                        stack_bytes += 8;
                     }
-
-                    case IR_VAL_LOCAL: {
-                        if (aarch64IsFloatType(arm->type)) {
-                            aarch64LoadFloatValue(ctx, arm, i);
-                        } else {
-                            aarch64LoadIntValue(ctx, arm, i);
-                        }
-                        break;
+                } else {
+                    if (gp_reg < 8) {
+                        gp_reg++;
+                    } else {
+                        stack_bytes += 8;
                     }
+                }
+            }
+            u32 call_stack_size = (u32)alignTo((int)stack_bytes, 16);
+            if (call_stack_size) {
+                aoStrCatFmt(ctx->buf, "sub sp, sp, #%u\n\t", call_stack_size);
+            }
 
-                    case IR_VAL_CONST_INT: {
-                        aarch64MovImm64(ctx, (u32)i, (u64)arm->as._i64);
-                        break;
+            gp_reg = 0;
+            fp_reg = 0;
+            u32 stack_offset = 0;
+            for (u64 i = 0; i < args->values->size; ++i) {
+                IrValue *arm = args->values->entries[i];
+                if (aarch64IsFloatType(arm->type)) {
+                    if (fp_reg < 8) {
+                        aarch64LoadFloatValue(ctx, arm, fp_reg);
+                        fp_reg++;
+                    } else {
+                        aarch64LoadFloatValue(ctx, arm, 15);
+                        aoStrCatFmt(ctx->buf, "str d15, [sp, #%u]\n\t", stack_offset);
+                        stack_offset += 8;
                     }
-
-                    case IR_VAL_CONST_FLOAT: {
-                        union {
-                            f64 f;
-                            u64 u;
-                        } as_u64;
-                        as_u64.f = arm->as._f64;
-                        aarch64MovImm64(ctx, 8, as_u64.u);
-                        aoStrCatFmt(ctx->buf, "fmov d%U, x8\n\t", i);
-                        break;
+                } else {
+                    if (gp_reg < 8) {
+                        aarch64LoadIntValue(ctx, arm, gp_reg);
+                        gp_reg++;
+                    } else {
+                        aarch64LoadIntValue(ctx, arm, 9);
+                        aoStrCatFmt(ctx->buf, "str x9, [sp, #%u]\n\t", stack_offset);
+                        stack_offset += 8;
                     }
-
-                    case IR_VAL_TMP: {
-                        if (aarch64IsFloatType(arm->type)) {
-                            aarch64LoadFloatValue(ctx, arm, i);
-                        } else {
-                            aarch64LoadIntValue(ctx, arm, i);
-                        }
-                        break;
-                    }
-
-                    case IR_VAL_PARAM: {
-                        if (aarch64IsFloatType(arm->type)) {
-                            aarch64LoadFloatValue(ctx, arm, i);
-                        } else {
-                            aarch64LoadIntValue(ctx, arm, i);
-                        }
-                        break;
-                    }
-
-                    case IR_VAL_GLOBAL:
-                    case IR_VAL_PHI:
-                    case IR_VAL_LABEL:
-                    case IR_VAL_UNDEFINED:
-                    case IR_VAL_UNRESOLVED:
-                        loggerPanic("Unhandled argument kind: %s\n",
-                                irValueKindToString(arm->kind));
                 }
             }
 
             aoStrCatFmt(ctx->buf, "bl %S\n\t", args->label);
+            if (call_stack_size) {
+                aoStrCatFmt(ctx->buf, "add sp, sp, #%u\n\t", call_stack_size);
+            }
             if (instr->dst) {
                 if (aarch64IsFloatType(instr->dst->type)) {
                     aarch64StoreFloatValue(ctx, instr->dst, 0);
@@ -776,15 +808,29 @@ void aarch64GenInstr(AArch64Ctx *ctx, IrInstr *instr, IrInstr *next_instr) {
         case IR_BR: {
             IrBlock *true_block = instr->extra.blocks.target_block;
             IrBlock *false_block = instr->extra.blocks.fallthrough_block;
+            u32 true_phi_cnt = aarch64CountPhiCopiesForEdge(true_block, cur_block);
+            u32 false_phi_cnt = aarch64CountPhiCopiesForEdge(false_block, cur_block);
             aarch64LoadIntValue(ctx, instr->dst, 0);
-            aoStrCatFmt(ctx->buf, "cbnz x0, .LB%u\n\t", true_block->id);
-            aoStrCatFmt(ctx->buf, "b .LB%u\n\t", false_block->id);
+            if (true_phi_cnt == 0 && false_phi_cnt == 0) {
+                aoStrCatFmt(ctx->buf, "cbnz x0, .LB%u\n\t", true_block->id);
+                aoStrCatFmt(ctx->buf, "b .LB%u\n\t", false_block->id);
+                break;
+            }
+
+            u32 true_copy_label = ctx->current_label_id++;
+            aoStrCatFmt(ctx->buf, "cbnz x0, .LPHI%u\n\t", true_copy_label);
+            aarch64EmitPhiCopiesForEdge(ctx, false_block, cur_block);
+            aoStrCatFmt(ctx->buf, "b .LB%u\n", false_block->id);
+            aoStrCatFmt(ctx->buf, ".LPHI%u:\n\t", true_copy_label);
+            aarch64EmitPhiCopiesForEdge(ctx, true_block, cur_block);
+            aoStrCatFmt(ctx->buf, "b .LB%u\n\t", true_block->id);
             break;
         }
 
         case IR_LOOP:
         case IR_JMP: {
             IrBlock *target = instr->extra.blocks.target_block;
+            aarch64EmitPhiCopiesForEdge(ctx, target, cur_block);
             aoStrCatFmt(ctx->buf, "b .LB%u\n\t", target->id);
             break;
         }
@@ -829,14 +875,32 @@ void aarch64EmitFunction(AArch64Ctx *ctx, IrFunction *func) {
         aarch64CtxSetVarOffset(ctx, var->id, stack_offset);
     }
 
+    u32 gp_reg = 0;
+    u32 fp_reg = 0;
+    u32 stack_param_offset = 0;
     for (u64 i = 0; i < func->params->size; ++i) {
-        if (i >= 8) {
-            loggerPanic("Unhandled argument index for AArch64 call ABI: %lu\n", i);
-        }
-        char buf[8];
-        snprintf(buf, sizeof(buf), "x%lu", i);
         IrValue *param = func->params->entries[i];
-        aarch64GenStore(ctx, param, buf);
+        if (aarch64IsFloatType(param->type)) {
+            if (fp_reg < 8) {
+                aarch64StoreFloatValue(ctx, param, fp_reg);
+                fp_reg++;
+            } else {
+                u32 incoming_offset = (u32)local_stack_size + 16 + stack_param_offset;
+                aoStrCatFmt(ctx->buf, "ldr d15, [sp, #%u]\n\t", incoming_offset);
+                aarch64StoreFloatValue(ctx, param, 15);
+                stack_param_offset += 8;
+            }
+        } else {
+            if (gp_reg < 8) {
+                aarch64StoreIntValue(ctx, param, gp_reg);
+                gp_reg++;
+            } else {
+                u32 incoming_offset = (u32)local_stack_size + 16 + stack_param_offset;
+                aoStrCatFmt(ctx->buf, "ldr x15, [sp, #%u]\n\t", incoming_offset);
+                aarch64StoreIntValue(ctx, param, 15);
+                stack_param_offset += 8;
+            }
+        }
     }
 
     aoStrCatFmt(ctx->buf, "b .LB%u\n\t", func->entry_block->id);
@@ -857,7 +921,7 @@ void aarch64EmitFunction(AArch64Ctx *ctx, IrFunction *func) {
             /* While generating assembly we may have also nuked 
              * some instructions */
             if (instr->op == IR_NOP) continue;
-            aarch64GenInstr(ctx, instr, next_instr);
+            aarch64GenInstr(ctx, instr, next_instr, block);
         }
     }
 
