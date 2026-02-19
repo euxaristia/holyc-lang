@@ -372,7 +372,11 @@ int main(int argc, char **argv) {
 
     int use_aarch64 = args.target_arch && strcmp(args.target_arch, "aarch64") == 0;
 #if IS_ARM_64 && defined(__USE_NEW_BACKEND__)
-    use_aarch64 = 1;
+    /* Keep the new backend opt-in to avoid unstable default behavior. */
+    const char *force_new_backend = getenv("HCC_FORCE_AARCH64");
+    if (!use_aarch64 && force_new_backend && strcmp(force_new_backend, "1") == 0) {
+        use_aarch64 = 1;
+    }
 #endif
     if (use_aarch64) {
         IrCtx *ir_ctx = irLowerProgram(cc);
