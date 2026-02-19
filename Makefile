@@ -8,7 +8,7 @@ HCC_BIN        ?= ./hcc
 
 default: all
 
-.PHONY: all aarch64-sweep aarch64-sweep-assemble aarch64-op-audit
+.PHONY: all aarch64-sweep aarch64-sweep-assemble aarch64-op-audit aarch64-verify
 
 # To add sqlite3 support add -DHCC_LINK_SQLITE3=1 to the below like so:
 #```
@@ -46,6 +46,12 @@ aarch64-sweep-assemble:
 
 aarch64-op-audit:
 	HCC_BIN=$(HCC_BIN) ./scripts/aarch64-opcode-audit.sh
+
+aarch64-verify:
+	HCC_BIN=$(HCC_BIN) HCC_AARCH64_ASSEMBLE=1 ./scripts/aarch64-sweep.sh
+	HCC_BIN=$(HCC_BIN) HCC_AARCH64_ASSEMBLE=1 HCC_ENABLE_SQLITE_TEST=1 ./scripts/aarch64-sweep.sh
+	HCC_BIN=$(HCC_BIN) ./scripts/aarch64-opcode-audit.sh
+	HCC_BIN=$(HCC_BIN) HCC_ENABLE_SQLITE_TEST=1 ./scripts/aarch64-opcode-audit.sh
 
 clean:
 	rm -rf ./build ./hcc

@@ -120,6 +120,19 @@ Include SQLite-gated test (`32_sql.HC`) in the sweep:
 ```
 HCC_ENABLE_SQLITE_TEST=1 make aarch64-sweep
 ```
+Run the full AArch64 verification gate (assemble sweep + SQLite + emitted-opcode audit):
+```
+make aarch64-verify
+```
+
+### IR Cleanup Note
+The following IR opcodes were removed as dead code:
+- `IR_SELECT`
+- `IR_VA_ARG`
+- `IR_VA_START`
+- `IR_VA_END`
+
+They were never emitted by IR lowering and were not implemented in either backend (`x86_64` or `aarch64`).
 
 ### CMake - Not so simple
 **Create the Makefiles in ./build**
