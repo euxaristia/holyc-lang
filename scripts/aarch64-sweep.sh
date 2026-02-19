@@ -7,6 +7,7 @@ TEST_DIR="${ROOT_DIR}/src/tests"
 HCC_BIN="${HCC_BIN:-hcc}"
 STOP_ON_FAIL="${STOP_ON_FAIL:-0}"
 HCC_TIMEOUT_SEC="${HCC_TIMEOUT_SEC:-45}"
+HCC_ENABLE_SQLITE_TEST="${HCC_ENABLE_SQLITE_TEST:-0}"
 
 # Guardrails to reduce host OOM risk during large test sweeps.
 export HCC_MAX_JOBS="${HCC_MAX_JOBS:-1}"
@@ -41,10 +42,20 @@ fi
 cd "$TEST_DIR"
 while IFS= read -r -d '' file; do
   name="$(basename "$file")"
+  if [[ "$name" == "32_sql.HC" && "$HCC_ENABLE_SQLITE_TEST" != "1" ]]; then
+    echo "SKIP $name (set HCC_ENABLE_SQLITE_TEST=1 to include)"
+    continue
+  fi
   out="/tmp/hcc-a64-${name}.out"
   err="/tmp/hcc-a64-${name}.err"
+
+  hcc_args=(-target aarch64 -S "$name" -o /tmp/hcc-a64.s)
+  if [[ "$name" == "32_sql.HC" && "$HCC_ENABLE_SQLITE_TEST" == "1" ]]; then
+    hcc_args=(-target aarch64 -D__HCC_LINK_SQLITE3__ -S "$name" -o /tmp/hcc-a64.s)
+  fi
+
   if timeout --signal=KILL "${HCC_TIMEOUT_SEC}s" \
-    "$HCC_BIN" -target aarch64 -S "$name" -o /tmp/hcc-a64.s >"$out" 2>"$err"; then
+    "$HCC_BIN" "${hcc_args[@]}" >"$out" 2>"$err"; then
     echo "PASS $name"
     pass=$((pass + 1))
   else
