@@ -7,7 +7,7 @@ EXTRA_CFLAGS   ?=
 
 default: all
 
-.PHONY: all
+.PHONY: all aarch64-sweep
 
 # To add sqlite3 support add -DHCC_LINK_SQLITE3=1 to the below like so:
 #```
@@ -36,6 +36,9 @@ install:
 
 unit-test:
 	$(MAKE) -C ./build unit-test
+
+aarch64-sweep:
+	./scripts/aarch64-sweep.sh
 
 clean:
 	rm -rf ./build ./hcc

@@ -100,6 +100,15 @@ make && make install && make unit-test
 make && sudo make install && make unit-test
 ```
 
+**AArch64 codegen sweep with memory guardrails:**
+```
+make aarch64-sweep
+```
+Optional overrides:
+```
+HCC_BIN=./hcc HCC_MEM_LIMIT_KB=2200000 HCC_MAX_JOBS=1 HCC_TIMEOUT_SEC=45 make aarch64-sweep
+```
+
 ### CMake - Not so simple
 **Create the Makefiles in ./build**
 ```

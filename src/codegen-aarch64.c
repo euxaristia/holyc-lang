@@ -16,6 +16,8 @@ typedef struct AArch64Ctx {
     IrProgram *ir_program;
     Map *var_offsets;
     Set *registers;
+    Set *string_labels;
+    List *string_values;
     u64 int_reg_cnt;
 } AArch64Ctx;
 
@@ -26,6 +28,8 @@ AArch64Ctx *aarch64CtxNew(IrProgram *ir_program) {
     ctx->buf = aoStrNew();
     ctx->var_offsets = mapNew(8, &map_uint_to_uint_type);
     ctx->registers = setNew(32, &set_uint_type);
+    ctx->string_labels = setNew(32, &set_cstring_type);
+    ctx->string_values = listNew();
     ctx->int_reg_cnt = 0;
     return ctx;
 }
@@ -35,6 +39,8 @@ void aarch64CtxRelease(AArch64Ctx *ctx) {
     if (ctx) {
         mapRelease(ctx->var_offsets);
         setRelease(ctx->registers);
+        setRelease(ctx->string_labels);
+        listRelease(ctx->string_values, NULL);
         free(ctx);
     }
 }
@@ -112,6 +118,61 @@ int aarch64IsFloatType(IrValueType type) {
     return type == IR_TYPE_F64;
 }
 
+void aarch64CollectConstStringValue(AArch64Ctx *ctx, IrValue *value) {
+    if (!value) return;
+
+    if (value->kind == IR_VAL_CONST_STR) {
+        if (!value->as.str.label || !value->as.str.str) return;
+        if (!setHasLen(ctx->string_labels,
+                       value->as.str.label->data,
+                       value->as.str.label->len)) {
+            setAdd(ctx->string_labels, value->as.str.label->data);
+            listAppend(ctx->string_values, value);
+        }
+        return;
+    }
+
+    if (value->type == IR_TYPE_ARRAY && value->as.array.values) {
+        for (u64 i = 0; i < value->as.array.values->size; ++i) {
+            IrValue *entry = value->as.array.values->entries[i];
+            aarch64CollectConstStringValue(ctx, entry);
+        }
+    }
+}
+
+void aarch64CollectConstStrings(AArch64Ctx *ctx, IrProgram *program) {
+    for (u64 i = 0; i < program->functions->size; ++i) {
+        IrFunction *func = program->functions->entries[i];
+        listForEach(func->blocks) {
+            IrBlock *block = listValue(IrBlock *, it);
+            listForEach(block->instructions) {
+                IrInstr *instr = listValue(IrInstr *, it);
+                aarch64CollectConstStringValue(ctx, instr->dst);
+                aarch64CollectConstStringValue(ctx, instr->r1);
+                aarch64CollectConstStringValue(ctx, instr->r2);
+            }
+        }
+    }
+}
+
+void aarch64EmitConstStrings(AArch64Ctx *ctx) {
+    if (listEmpty(ctx->string_values)) {
+        aoStrCatFmt(ctx->buf, ".text\n\t");
+        return;
+    }
+
+    aoStrCatFmt(ctx->buf, ".section .rodata\n");
+    listForEach(ctx->string_values) {
+        IrValue *value = listValue(IrValue *, it);
+        aoStrCatFmt(ctx->buf,
+                    "%S:\n\t"
+                    ".asciz \"%S\"\n",
+                    value->as.str.label,
+                    value->as.str.str);
+    }
+    aoStrCatFmt(ctx->buf, ".text\n\t");
+}
+
 void aarch64MovImm64(AArch64Ctx *ctx, u32 reg, u64 imm) {
     int emitted = 0;
     for (u32 shift = 0; shift < 64; shift += 16) {
@@ -178,7 +239,20 @@ void aarch64LoadIntValue(AArch64Ctx *ctx, IrValue *value, u32 reg) {
             }
         }
         case IR_VAL_GLOBAL:
+            if (value->as.global.name) {
+                aoStrCatFmt(ctx->buf, "adrp x%u, %S\n\t", reg, value->as.global.name);
+                aoStrCatFmt(ctx->buf, "add x%u, x%u, :lo12:%S\n\t",
+                            reg, reg, value->as.global.name);
+                return;
+            }
+            loggerWarning("AArch64: global value missing symbol, using 0\n");
+            aoStrCatFmt(ctx->buf, "mov x%u, #0\n\t", reg);
+            return;
         case IR_VAL_CONST_STR:
+            aoStrCatFmt(ctx->buf, "adrp x%u, %S\n\t", reg, value->as.str.label);
+            aoStrCatFmt(ctx->buf, "add x%u, x%u, :lo12:%S\n\t",
+                        reg, reg, value->as.str.label);
+            return;
         case IR_VAL_PHI:
         case IR_VAL_LABEL:
         case IR_VAL_UNDEFINED:
@@ -352,9 +426,11 @@ void aarch64GenInstr(AArch64Ctx *ctx, IrInstr *instr, IrInstr *next_instr) {
                     }
 
                     case IR_VAL_LOCAL: {
-                        u32 offset = aarch64CtxGetVarOffset(ctx, arm->as.var.id);
-                        assert(offset != 0);
-                        aoStrCatFmt(ctx->buf, "ldr x%U, [sp, #%u]\n\t", i, offset);
+                        if (aarch64IsFloatType(arm->type)) {
+                            aarch64LoadFloatValue(ctx, arm, i);
+                        } else {
+                            aarch64LoadIntValue(ctx, arm, i);
+                        }
                         break;
                     }
 
@@ -363,17 +439,35 @@ void aarch64GenInstr(AArch64Ctx *ctx, IrInstr *instr, IrInstr *next_instr) {
                         break;
                     }
 
+                    case IR_VAL_CONST_FLOAT: {
+                        union {
+                            f64 f;
+                            u64 u;
+                        } as_u64;
+                        as_u64.f = arm->as._f64;
+                        aarch64MovImm64(ctx, 8, as_u64.u);
+                        aoStrCatFmt(ctx->buf, "fmov d%U, x8\n\t", i);
+                        break;
+                    }
+
                     case IR_VAL_TMP: {
-                        aarch64LoadIntValue(ctx, arm, i);
+                        if (aarch64IsFloatType(arm->type)) {
+                            aarch64LoadFloatValue(ctx, arm, i);
+                        } else {
+                            aarch64LoadIntValue(ctx, arm, i);
+                        }
                         break;
                     }
 
                     case IR_VAL_PARAM: {
-                        aarch64LoadIntValue(ctx, arm, i);
+                        if (aarch64IsFloatType(arm->type)) {
+                            aarch64LoadFloatValue(ctx, arm, i);
+                        } else {
+                            aarch64LoadIntValue(ctx, arm, i);
+                        }
                         break;
                     }
 
-                    case IR_VAL_CONST_FLOAT:
                     case IR_VAL_GLOBAL:
                     case IR_VAL_PHI:
                     case IR_VAL_LABEL:
@@ -658,15 +752,15 @@ void aarch64GenInstr(AArch64Ctx *ctx, IrInstr *instr, IrInstr *next_instr) {
             IrBlock *true_block = instr->extra.blocks.target_block;
             IrBlock *false_block = instr->extra.blocks.fallthrough_block;
             aarch64LoadIntValue(ctx, instr->dst, 0);
-            aoStrCatFmt(ctx->buf, "cbnz x0, .L%u\n\t", true_block->id);
-            aoStrCatFmt(ctx->buf, "b .L%u\n\t", false_block->id);
+            aoStrCatFmt(ctx->buf, "cbnz x0, .LB%u\n\t", true_block->id);
+            aoStrCatFmt(ctx->buf, "b .LB%u\n\t", false_block->id);
             break;
         }
 
         case IR_LOOP:
         case IR_JMP: {
             IrBlock *target = instr->extra.blocks.target_block;
-            aoStrCatFmt(ctx->buf, "b .L%u\n\t", target->id);
+            aoStrCatFmt(ctx->buf, "b .LB%u\n\t", target->id);
             break;
         }
 
@@ -720,14 +814,14 @@ void aarch64EmitFunction(AArch64Ctx *ctx, IrFunction *func) {
         aarch64GenStore(ctx, param, buf);
     }
 
-    aoStrCatFmt(ctx->buf, "b .L%u\n\t", func->entry_block->id);
+    aoStrCatFmt(ctx->buf, "b .LB%u\n\t", func->entry_block->id);
 
     listForEach(func->blocks) {
         IrBlock *block = listValue(IrBlock *, it);
         if (ctx->buf->data[ctx->buf->len - 1] == '\t') {
             ctx->buf->len--;
         }
-        aoStrCatFmt(ctx->buf, ".L%u:\n\t", block->id);
+        aoStrCatFmt(ctx->buf, ".LB%u:\n\t", block->id);
 
         listForEach(block->instructions) {
             IrInstr *instr = listValue(IrInstr *, it);
@@ -756,7 +850,8 @@ void aarch64EmitFunction(AArch64Ctx *ctx, IrFunction *func) {
 AoStr *aarch64GenCode(IrCtx *ir_ctx) {
     IrProgram *program = ir_ctx->prog;
     AArch64Ctx *ctx = aarch64CtxNew(program);
-    aoStrCatPrintf(ctx->buf, ".text\n\t");
+    aarch64CollectConstStrings(ctx, program);
+    aarch64EmitConstStrings(ctx);
     for (u64 i = 0; i < program->functions->size; ++i) {
         IrFunction *func = program->functions->entries[i];
         aarch64EmitFunction(ctx, func);
