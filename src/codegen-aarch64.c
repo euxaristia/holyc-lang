@@ -835,7 +835,33 @@ void aarch64GenInstr(AArch64Ctx *ctx, IrInstr *instr, IrInstr *next_instr, IrBlo
             break;
         }
 
-        case IR_SWITCH:
+        case IR_SWITCH: {
+            IrBlock *default_block = instr->extra.blocks.target_block;
+            if (!default_block || !instr->dst) {
+                loggerWarning("AArch64: malformed switch, falling back to return\n");
+                aoStrCatFmt(ctx->buf, "b .Lret%u\n\t", ctx->return_label_id);
+                break;
+            }
+
+            aarch64LoadIntValue(ctx, instr->dst, 0);
+            if (instr->extra.cases) {
+                listForEach(instr->extra.cases) {
+                    IrPair *pair = listValue(IrPair *, it);
+                    if (!pair || !pair->ir_block || !pair->ir_value) continue;
+                    u32 next_case_label = ctx->current_label_id++;
+                    aarch64LoadIntValue(ctx, pair->ir_value, 1);
+                    aoStrCatFmt(ctx->buf, "cmp x0, x1\n\t");
+                    aoStrCatFmt(ctx->buf, "b.ne .LSW%u\n\t", next_case_label);
+                    aarch64EmitPhiCopiesForEdge(ctx, pair->ir_block, cur_block);
+                    aoStrCatFmt(ctx->buf, "b .LB%u\n", pair->ir_block->id);
+                    aoStrCatFmt(ctx->buf, ".LSW%u:\n\t", next_case_label);
+                }
+            }
+
+            aarch64EmitPhiCopiesForEdge(ctx, default_block, cur_block);
+            aoStrCatFmt(ctx->buf, "b .LB%u\n\t", default_block->id);
+            break;
+        }
         case IR_PHI:
             break;
         case IR_SELECT:
