@@ -26,3 +26,7 @@ jobs:
         run: make aarch64-sweep-assemble
       - name: AArch64 assemble-backed sweep (SQLite)
         run: HCC_ENABLE_SQLITE_TEST=1 make aarch64-sweep-assemble
+      - name: AArch64 emitted-opcode audit
+        run: make aarch64-op-audit
+      - name: AArch64 emitted-opcode audit (SQLite)
+        run: HCC_ENABLE_SQLITE_TEST=1 make aarch64-op-audit
