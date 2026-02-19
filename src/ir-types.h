@@ -278,6 +278,8 @@ typedef struct IrCtx {
     IrProgram *prog;
     /* The main compiler struct */
     Cctrl *cc;
+    /* Intra-function label -> block mapping for goto/label lowering. */
+    Map *label_blocks;
 } IrCtx;
 
 

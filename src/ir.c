@@ -258,6 +258,7 @@ IrCtx *irCtxNew(Cctrl *cc) {
     ctx->prog->functions = irFunctionVecNew();
     ctx->prog->globals = NULL;
     ctx->cc = cc;
+    ctx->label_blocks = NULL;
     return ctx;
 }
 
@@ -475,6 +476,19 @@ IrInstr *irStore(IrValue *ir_dest, IrValue *ir_value) {
 }
 
 IrValue *irExpr(IrCtx *ctx, Ast *ast);
+
+static IrBlock *irGetOrCreateLabelBlock(IrCtx *ctx, AoStr *label) {
+    if (!label) {
+        loggerPanic("goto/label lowering: missing label\n");
+    }
+    IrBlock *block = mapGet(ctx->label_blocks, label->data);
+    if (block) return block;
+
+    block = irBlockNew();
+    irFnAddBlock(ctx->cur_func, block);
+    mapAdd(ctx->label_blocks, label->data, block);
+    return block;
+}
 
 IrValue *irFnCall(IrCtx *ctx, Ast *ast) {
     IrValueType ret_type = irConvertType(ast->type);
@@ -1241,12 +1255,34 @@ void irLowerAst(IrCtx *ctx, Ast *ast) {
             break;
 
         case AST_GOTO:
-            /* @TODO: lower true intra-function goto/label control flow. */
-            loggerWarning("IR lowering: goto fallback to function exit\n");
-            irJump(ctx->cur_func, ctx->cur_block, ctx->cur_func->exit_block);
+        case AST_JUMP: {
+            AoStr *label = astHackedGetLabel(ast);
+            IrBlock *target = irGetOrCreateLabelBlock(ctx, label);
+            if (!ctx->cur_block->sealed) {
+                IrInstr *jump = irJump(ctx->cur_func, ctx->cur_block, target);
+                irBlockAddInstr(ctx, jump);
+            }
+            /* Continue lowering into a fresh block for any subsequent
+             * statements in this lexical scope. */
+            IrBlock *next = irBlockNew();
+            irFnAddBlock(ctx->cur_func, next);
+            ctx->cur_block = next;
             break;
+        }
 
-        case AST_LABEL:
+        case AST_LABEL: {
+            AoStr *label = astHackedGetLabel(ast);
+            IrBlock *target = irGetOrCreateLabelBlock(ctx, label);
+            if (ctx->cur_block != target) {
+                if (!ctx->cur_block->sealed) {
+                    IrInstr *jump = irJump(ctx->cur_func, ctx->cur_block, target);
+                    irBlockAddInstr(ctx, jump);
+                }
+                ctx->cur_block = target;
+            }
+            break;
+        }
+
         case AST_GVAR:
         case AST_FUNC:
         case AST_ARRAY_INIT:
@@ -1270,7 +1306,6 @@ void irLowerAst(IrCtx *ctx, Ast *ast) {
         case AST_ASM_FUNCDEF:
         case AST_FUN_PROTO:
         case AST_CASE:
-        case AST_JUMP:
         case AST_EXTERN_FUNC:
         case AST_PLACEHOLDER:
         case AST_DEFAULT:
@@ -1314,6 +1349,7 @@ void irMakeFunction(IrCtx *ctx, Ast *ast_func) {
     ctx->cur_block = entry;
     func->entry_block = entry;
     ctx->cur_func = func;
+    ctx->label_blocks = mapNew(16, &map_cstring_opaque_type);
 
     irFnAddBlock(ctx->cur_func, entry);
 
@@ -1369,6 +1405,8 @@ void irMakeFunction(IrCtx *ctx, Ast *ast_func) {
 
     irLowerAst(ctx, ast_func->body);
     irSimplifyFunction(func);
+    mapRelease(ctx->label_blocks);
+    ctx->label_blocks = NULL;
 }
 
 void irDump(Cctrl *cc) {
