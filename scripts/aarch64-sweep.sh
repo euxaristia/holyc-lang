@@ -57,10 +57,12 @@ while IFS= read -r -d '' file; do
   fi
   out="/tmp/hcc-a64-${name}.out"
   err="/tmp/hcc-a64-${name}.err"
+  asm="$(mktemp "/tmp/hcc-a64-${name}.XXXXXX.s")"
+  obj="$(mktemp "/tmp/hcc-a64-${name}.XXXXXX.o")"
 
-  hcc_args=(-target aarch64 -S "$name" -o /tmp/hcc-a64.s)
+  hcc_args=(-target aarch64 -S "$name" -o "$asm")
   if [[ "$name" == "32_sql.HC" && "$HCC_ENABLE_SQLITE_TEST" == "1" ]]; then
-    hcc_args=(-target aarch64 -D__HCC_LINK_SQLITE3__ -S "$name" -o /tmp/hcc-a64.s)
+    hcc_args=(-target aarch64 -D__HCC_LINK_SQLITE3__ -S "$name" -o "$asm")
   fi
 
   if timeout --signal=KILL "${HCC_TIMEOUT_SEC}s" \
@@ -78,7 +80,7 @@ while IFS= read -r -d '' file; do
       continue
     fi
     if [[ "$HCC_AARCH64_ASSEMBLE" == "1" ]]; then
-      if "$AARCH64_CC" -c /tmp/hcc-a64.s -o /tmp/hcc-a64.o >>"$out" 2>>"$err"; then
+      if "$AARCH64_CC" -c "$asm" -o "$obj" >>"$out" 2>>"$err"; then
         echo "PASS $name"
         pass=$((pass + 1))
       else
@@ -96,6 +98,7 @@ while IFS= read -r -d '' file; do
       echo "PASS $name"
       pass=$((pass + 1))
     fi
+    rm -f "$asm" "$obj"
   else
     ec=$?
     echo "FAIL $name"
@@ -111,6 +114,7 @@ while IFS= read -r -d '' file; do
       break
     fi
   fi
+  rm -f "$asm" "$obj"
 done < <(find . -maxdepth 1 -type f -name '*.HC' -print0 | sort -z)
 
 echo

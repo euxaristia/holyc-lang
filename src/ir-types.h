@@ -72,13 +72,7 @@ typedef enum IrOp {
     IR_SWITCH,      /* Switch statement */
     IR_CALL,        /* Function call */
     IR_PHI,         /* SSA phi node */
-    IR_LABEL,       /* Not used for code gen, temporary while resolving unconditional jumps */
-    
-    /* Other operations */
-    IR_SELECT,      /* Select between two values based on condition */
-    IR_VA_ARG,      /* Get next variadic argument */
-    IR_VA_START,    /* Initialize va_list */
-    IR_VA_END       /* Clean up va_list */
+    IR_LABEL        /* Not used for code gen, temporary while resolving unconditional jumps */
 } IrOp;
 
 
