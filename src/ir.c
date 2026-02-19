@@ -386,6 +386,10 @@ IrInstr *irBranch(IrFunction *func,
         loggerPanic("irBranch: NULL parameter provided\n");
     }
 
+    if (block->sealed) {
+        return NULL;
+    }
+
     if (cond->type != IR_TYPE_I8) {
         IrValue *zero = irConstInt(IR_TYPE_I8, 0);
         IrValue *bool_cond = irTmp(IR_TYPE_I8, 1);
@@ -415,15 +419,15 @@ IrInstr *irJumpInternal(IrFunction *func,
     if (!block || !target) {
         loggerPanic("NULL param\n");
     }
-    /* For a do-while we need this */
     if (block->sealed) {
-        loggerWarning("Tried to add a jump to a sealed block: %d\n",
-                block->id);
+        return NULL;
     }
 
     IrInstr *instr = irInstrNew(opcode, NULL, NULL, NULL);
     instr->extra.blocks.target_block = target;
     instr->extra.blocks.fallthrough_block = NULL;
+
+    listAppend(block->instructions, instr);
 
     /* This block is done */
     block->sealed = 1;
@@ -554,10 +558,7 @@ IrValue *irBinOpExpr(IrCtx *ctx, Ast *ast) {
 
         IrValue *right = irExpr(ctx, ast->right);
 
-        IrInstr *jump_instr = irJump(ctx->cur_func, ctx->cur_block, ir_end_block);
-
-        /* Add to the current blocks instructions */
-        irBlockAddInstr(ctx, jump_instr);
+        irJump(ctx->cur_func, ctx->cur_block, ir_end_block);
         irFnAddBlock(ctx->cur_func, ir_end_block);
         ctx->cur_block = ir_end_block;
 
@@ -583,10 +584,7 @@ IrValue *irBinOpExpr(IrCtx *ctx, Ast *ast) {
 
         IrValue *right = irExpr(ctx, ast->right);
 
-        IrInstr *jump_instr = irJump(ctx->cur_func, ctx->cur_block, ir_end_block);
-
-        /* Add to the current blocks instructions */
-        irBlockAddInstr(ctx, jump_instr);
+        irJump(ctx->cur_func, ctx->cur_block, ir_end_block);
         irFnAddBlock(ctx->cur_func, ir_end_block);
         ctx->cur_block = ir_end_block;
 
@@ -1259,8 +1257,7 @@ void irLowerAst(IrCtx *ctx, Ast *ast) {
             AoStr *label = astHackedGetLabel(ast);
             IrBlock *target = irGetOrCreateLabelBlock(ctx, label);
             if (!ctx->cur_block->sealed) {
-                IrInstr *jump = irJump(ctx->cur_func, ctx->cur_block, target);
-                irBlockAddInstr(ctx, jump);
+                irJump(ctx->cur_func, ctx->cur_block, target);
             }
             /* Continue lowering into a fresh block for any subsequent
              * statements in this lexical scope. */
@@ -1275,8 +1272,7 @@ void irLowerAst(IrCtx *ctx, Ast *ast) {
             IrBlock *target = irGetOrCreateLabelBlock(ctx, label);
             if (ctx->cur_block != target) {
                 if (!ctx->cur_block->sealed) {
-                    IrInstr *jump = irJump(ctx->cur_func, ctx->cur_block, target);
-                    irBlockAddInstr(ctx, jump);
+                    irJump(ctx->cur_func, ctx->cur_block, target);
                 }
                 ctx->cur_block = target;
             }
