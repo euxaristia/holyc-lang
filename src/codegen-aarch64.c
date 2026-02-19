@@ -193,7 +193,7 @@ void aarch64MovImm64(AArch64Ctx *ctx, u32 reg, u64 imm) {
 void aarch64LoadIntValue(AArch64Ctx *ctx, IrValue *value, u32 reg) {
     switch (value->kind) {
         case IR_VAL_CONST_INT:
-            aoStrCatFmt(ctx->buf, "mov x%u, #%I\n\t", reg, value->as._i64);
+            aarch64MovImm64(ctx, reg, (u64)value->as._i64);
             return;
         case IR_VAL_CONST_FLOAT: {
             union {
@@ -306,7 +306,7 @@ void aarch64StoreIntValue(AArch64Ctx *ctx, IrValue *dest, u32 reg) {
 void aarch64LoadFloatValue(AArch64Ctx *ctx, IrValue *value, u32 reg) {
     switch (value->kind) {
         case IR_VAL_CONST_INT:
-            aoStrCatFmt(ctx->buf, "mov x%u, #%I\n\t", reg, value->as._i64);
+            aarch64MovImm64(ctx, reg, (u64)value->as._i64);
             aoStrCatFmt(ctx->buf, "scvtf d%u, x%u\n\t", reg, reg);
             return;
         case IR_VAL_LOCAL:
@@ -435,7 +435,7 @@ void aarch64GenInstr(AArch64Ctx *ctx, IrInstr *instr, IrInstr *next_instr) {
                     }
 
                     case IR_VAL_CONST_INT: {
-                        aoStrCatFmt(ctx->buf, "mov x%U, #%I\n\t", i, arm->as._i64);
+                        aarch64MovImm64(ctx, (u32)i, (u64)arm->as._i64);
                         break;
                     }
 
@@ -508,8 +508,7 @@ void aarch64GenInstr(AArch64Ctx *ctx, IrInstr *instr, IrInstr *next_instr) {
             break;
         }
 
-        case IR_IDIV:
-        case IR_UDIV: {
+        case IR_IDIV: {
             aarch64LoadIntValue(ctx, instr->r1, 0);
             aarch64LoadIntValue(ctx, instr->r2, 1);
             aoStrCatFmt(ctx->buf, "sdiv x8, x0, x1\n\t");
@@ -518,7 +517,25 @@ void aarch64GenInstr(AArch64Ctx *ctx, IrInstr *instr, IrInstr *next_instr) {
             break;
         }
 
-        case IR_IREM:
+        case IR_UDIV: {
+            aarch64LoadIntValue(ctx, instr->r1, 0);
+            aarch64LoadIntValue(ctx, instr->r2, 1);
+            aoStrCatFmt(ctx->buf, "udiv x8, x0, x1\n\t");
+            if (instr->dst) aarch64StoreIntValue(ctx, instr->dst, 8);
+            aarch64ClearIntRegisters(ctx);
+            break;
+        }
+
+        case IR_IREM: {
+            aarch64LoadIntValue(ctx, instr->r1, 0);
+            aarch64LoadIntValue(ctx, instr->r2, 1);
+            aoStrCatFmt(ctx->buf, "sdiv x9, x0, x1\n\t");
+            aoStrCatFmt(ctx->buf, "msub x8, x9, x1, x0\n\t");
+            if (instr->dst) aarch64StoreIntValue(ctx, instr->dst, 8);
+            aarch64ClearIntRegisters(ctx);
+            break;
+        }
+
         case IR_UREM: {
             aarch64LoadIntValue(ctx, instr->r1, 0);
             aarch64LoadIntValue(ctx, instr->r2, 1);
@@ -573,11 +590,19 @@ void aarch64GenInstr(AArch64Ctx *ctx, IrInstr *instr, IrInstr *next_instr) {
             break;
         }
 
-        case IR_SHR:
-        case IR_SAR: {
+        case IR_SHR: {
             aarch64LoadIntValue(ctx, instr->r1, 0);
             aarch64LoadIntValue(ctx, instr->r2, 1);
             aoStrCatFmt(ctx->buf, "lsr x8, x0, x1\n\t");
+            if (instr->dst) aarch64StoreIntValue(ctx, instr->dst, 8);
+            aarch64ClearIntRegisters(ctx);
+            break;
+        }
+
+        case IR_SAR: {
+            aarch64LoadIntValue(ctx, instr->r1, 0);
+            aarch64LoadIntValue(ctx, instr->r2, 1);
+            aoStrCatFmt(ctx->buf, "asr x8, x0, x1\n\t");
             if (instr->dst) aarch64StoreIntValue(ctx, instr->dst, 8);
             aarch64ClearIntRegisters(ctx);
             break;

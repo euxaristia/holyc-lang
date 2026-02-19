@@ -657,7 +657,11 @@ IrValue *irBinOpExpr(IrCtx *ctx, Ast *ast) {
                 op = IR_SHL;
                 break;
             case AST_BIN_OP_SHR:
-                op = IR_SHR;
+                if (ast->type->issigned) {
+                    op = IR_SAR;
+                } else {
+                    op = IR_SHR;
+                }
                 break;
             case AST_BIN_OP_BIT_AND:
                 op = IR_AND;

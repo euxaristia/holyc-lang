@@ -8,6 +8,8 @@ HCC_BIN="${HCC_BIN:-hcc}"
 STOP_ON_FAIL="${STOP_ON_FAIL:-0}"
 HCC_TIMEOUT_SEC="${HCC_TIMEOUT_SEC:-45}"
 HCC_ENABLE_SQLITE_TEST="${HCC_ENABLE_SQLITE_TEST:-0}"
+HCC_AARCH64_ASSEMBLE="${HCC_AARCH64_ASSEMBLE:-0}"
+AARCH64_CC="${AARCH64_CC:-aarch64-linux-gnu-gcc}"
 
 # Guardrails to reduce host OOM risk during large test sweeps.
 export HCC_MAX_JOBS="${HCC_MAX_JOBS:-1}"
@@ -39,6 +41,11 @@ if ! command -v timeout >/dev/null 2>&1; then
   exit 127
 fi
 
+if [[ "$HCC_AARCH64_ASSEMBLE" == "1" ]] && ! command -v "$AARCH64_CC" >/dev/null 2>&1; then
+  echo "AArch64 assembler toolchain not found in PATH: $AARCH64_CC" >&2
+  exit 127
+fi
+
 cd "$TEST_DIR"
 while IFS= read -r -d '' file; do
   name="$(basename "$file")"
@@ -56,8 +63,25 @@ while IFS= read -r -d '' file; do
 
   if timeout --signal=KILL "${HCC_TIMEOUT_SEC}s" \
     "$HCC_BIN" "${hcc_args[@]}" >"$out" 2>"$err"; then
-    echo "PASS $name"
-    pass=$((pass + 1))
+    if [[ "$HCC_AARCH64_ASSEMBLE" == "1" ]]; then
+      if "$AARCH64_CC" -c /tmp/hcc-a64.s -o /tmp/hcc-a64.o >>"$out" 2>>"$err"; then
+        echo "PASS $name"
+        pass=$((pass + 1))
+      else
+        echo "FAIL $name"
+        sed -n '1,40p' "$err"
+        fail=$((fail + 1))
+        if [[ -z "$first_failed" ]]; then
+          first_failed="$name"
+        fi
+        if [[ "$STOP_ON_FAIL" == "1" ]]; then
+          break
+        fi
+      fi
+    else
+      echo "PASS $name"
+      pass=$((pass + 1))
+    fi
   else
     ec=$?
     echo "FAIL $name"
