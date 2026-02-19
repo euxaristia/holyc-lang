@@ -10,6 +10,7 @@ HCC_TIMEOUT_SEC="${HCC_TIMEOUT_SEC:-45}"
 HCC_ENABLE_SQLITE_TEST="${HCC_ENABLE_SQLITE_TEST:-0}"
 HCC_AARCH64_ASSEMBLE="${HCC_AARCH64_ASSEMBLE:-0}"
 AARCH64_CC="${AARCH64_CC:-aarch64-linux-gnu-gcc}"
+HCC_FAIL_ON_BACKEND_WARN="${HCC_FAIL_ON_BACKEND_WARN:-1}"
 
 # Guardrails to reduce host OOM risk during large test sweeps.
 export HCC_MAX_JOBS="${HCC_MAX_JOBS:-1}"
@@ -35,6 +36,7 @@ fi
 pass=0
 fail=0
 first_failed=""
+warn_pat='AArch64: unhandled|IR lowering: goto fallback to function exit'
 
 if ! command -v timeout >/dev/null 2>&1; then
   echo "timeout command not found; install coreutils timeout" >&2
@@ -63,6 +65,18 @@ while IFS= read -r -d '' file; do
 
   if timeout --signal=KILL "${HCC_TIMEOUT_SEC}s" \
     "$HCC_BIN" "${hcc_args[@]}" >"$out" 2>"$err"; then
+    if [[ "$HCC_FAIL_ON_BACKEND_WARN" == "1" ]] && rg -n "$warn_pat" "$err" >/dev/null 2>&1; then
+      echo "FAIL $name"
+      sed -n '1,40p' "$err"
+      fail=$((fail + 1))
+      if [[ -z "$first_failed" ]]; then
+        first_failed="$name"
+      fi
+      if [[ "$STOP_ON_FAIL" == "1" ]]; then
+        break
+      fi
+      continue
+    fi
     if [[ "$HCC_AARCH64_ASSEMBLE" == "1" ]]; then
       if "$AARCH64_CC" -c /tmp/hcc-a64.s -o /tmp/hcc-a64.o >>"$out" 2>>"$err"; then
         echo "PASS $name"
