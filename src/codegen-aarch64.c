@@ -865,11 +865,16 @@ void aarch64GenInstr(AArch64Ctx *ctx, IrInstr *instr, IrInstr *next_instr, IrBlo
         case IR_PHI:
             break;
         case IR_SELECT:
+            loggerPanic("AArch64 backend: IR_SELECT unsupported; lower to CFG/phi first\n");
+            break;
         case IR_VA_ARG:
         case IR_VA_START:
         case IR_VA_END:
+            loggerPanic("AArch64 backend: varargs IR op `%s` unsupported\n",
+                    irOpcodeToString(instr));
+            break;
         default:
-            loggerWarning("AArch64: unhandled op `%s`, emitting nop-equivalent\n",
+            loggerPanic("AArch64 backend: unknown IR op `%s`\n",
                     irOpcodeToString(instr));
             break;
     }
