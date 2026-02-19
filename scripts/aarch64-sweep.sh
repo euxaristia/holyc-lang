@@ -65,7 +65,7 @@ while IFS= read -r -d '' file; do
 
   if timeout --signal=KILL "${HCC_TIMEOUT_SEC}s" \
     "$HCC_BIN" "${hcc_args[@]}" >"$out" 2>"$err"; then
-    if [[ "$HCC_FAIL_ON_BACKEND_WARN" == "1" ]] && rg -n "$warn_pat" "$err" >/dev/null 2>&1; then
+    if [[ "$HCC_FAIL_ON_BACKEND_WARN" == "1" ]] && grep -En "$warn_pat" "$err" >/dev/null 2>&1; then
       echo "FAIL $name"
       sed -n '1,40p' "$err"
       fail=$((fail + 1))
