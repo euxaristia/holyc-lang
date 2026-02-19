@@ -245,9 +245,8 @@ void aarch64LoadIntValue(AArch64Ctx *ctx, IrValue *value, u32 reg) {
                             reg, reg, value->as.global.name);
                 return;
             }
-            loggerWarning("AArch64: global value missing symbol, using 0\n");
-            aoStrCatFmt(ctx->buf, "mov x%u, #0\n\t", reg);
-            return;
+            loggerPanic("AArch64 backend: global value missing symbol\n");
+            break;
         case IR_VAL_CONST_STR:
             aoStrCatFmt(ctx->buf, "adrp x%u, %S\n\t", reg, value->as.str.label);
             aoStrCatFmt(ctx->buf, "add x%u, x%u, :lo12:%S\n\t",
@@ -257,10 +256,9 @@ void aarch64LoadIntValue(AArch64Ctx *ctx, IrValue *value, u32 reg) {
         case IR_VAL_LABEL:
         case IR_VAL_UNDEFINED:
         case IR_VAL_UNRESOLVED:
-            loggerWarning("AArch64: unhandled int value kind `%s`, using 0\n",
+            loggerPanic("AArch64 backend: unsupported int value kind `%s`\n",
                     irValueKindToString(value->kind));
-            aoStrCatFmt(ctx->buf, "mov x%u, #0\n\t", reg);
-            return;
+            break;
     }
 }
 
@@ -333,10 +331,9 @@ void aarch64LoadFloatValue(AArch64Ctx *ctx, IrValue *value, u32 reg) {
         case IR_VAL_LABEL:
         case IR_VAL_UNDEFINED:
         case IR_VAL_UNRESOLVED:
-            loggerWarning("AArch64: unhandled float value kind `%s`, using 0.0\n",
+            loggerPanic("AArch64 backend: unsupported float value kind `%s`\n",
                     irValueKindToString(value->kind));
-            aoStrCatFmt(ctx->buf, "fmov d%u, xzr\n\t", reg);
-            return;
+            break;
     }
 }
 
@@ -838,8 +835,7 @@ void aarch64GenInstr(AArch64Ctx *ctx, IrInstr *instr, IrInstr *next_instr, IrBlo
         case IR_SWITCH: {
             IrBlock *default_block = instr->extra.blocks.target_block;
             if (!default_block || !instr->dst) {
-                loggerWarning("AArch64: malformed switch, falling back to return\n");
-                aoStrCatFmt(ctx->buf, "b .Lret%u\n\t", ctx->return_label_id);
+                loggerPanic("AArch64 backend: malformed IR_SWITCH\n");
                 break;
             }
 
