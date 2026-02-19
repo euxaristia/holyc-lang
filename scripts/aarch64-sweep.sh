@@ -78,6 +78,7 @@ while IFS= read -r -d '' file; do
         first_failed="$name"
       fi
       if [[ "$STOP_ON_FAIL" == "1" ]]; then
+        rm -f "$asm" "$obj"
         break
       fi
       rm -f "$asm" "$obj"
@@ -95,6 +96,7 @@ while IFS= read -r -d '' file; do
           first_failed="$name"
         fi
         if [[ "$STOP_ON_FAIL" == "1" ]]; then
+          rm -f "$asm" "$obj"
           break
         fi
       fi
@@ -115,6 +117,7 @@ while IFS= read -r -d '' file; do
       first_failed="$name"
     fi
     if [[ "$STOP_ON_FAIL" == "1" ]]; then
+      rm -f "$asm" "$obj"
       break
     fi
   fi
