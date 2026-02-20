@@ -108,10 +108,15 @@ while IFS= read -r -d '' file; do
   else
     ec=$?
     echo "FAIL $name"
-    if [[ $ec -eq 124 ]]; then
+    if [[ $ec -eq 124 || $ec -eq 137 ]]; then
       echo "Timed out after ${HCC_TIMEOUT_SEC}s"
     fi
     sed -n '1,40p' "$err"
+    if [[ "$name" == "32_sql.HC" && "$HCC_ENABLE_SQLITE_TEST" == "1" ]] &&
+       grep -Eiq "sqlite|cannot find -lsqlite3|fatal error: sqlite3\\.h" "$err"; then
+      echo "Hint: SQLite test failed under AArch64 toolchain."
+      echo "Hint: install AArch64 sqlite3 dev libs, or rerun with HCC_ENABLE_SQLITE_TEST=0."
+    fi
     fail=$((fail + 1))
     if [[ -z "$first_failed" ]]; then
       first_failed="$name"

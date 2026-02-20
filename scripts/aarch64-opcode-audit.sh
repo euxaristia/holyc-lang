@@ -66,11 +66,21 @@ while IFS= read -r -d '' file; do
     hcc_args=(-D__HCC_LINK_SQLITE3__ --dump-ir "$name")
   fi
 
-  if ! timeout --signal=KILL "${HCC_TIMEOUT_SEC}s" \
+  if timeout --signal=KILL "${HCC_TIMEOUT_SEC}s" \
     "$HCC_BIN" "${hcc_args[@]}" >"$tmp_out" 2>"$tmp_err"; then
+    :
+  else
     ec=$?
     echo "FAIL $name (dump-ir failed, ec=$ec)" >&2
+    if [[ $ec -eq 124 || $ec -eq 137 ]]; then
+      echo "Timed out after ${HCC_TIMEOUT_SEC}s" >&2
+    fi
     sed -n '1,40p' "$tmp_err" >&2
+    if [[ "$name" == "32_sql.HC" && "$HCC_ENABLE_SQLITE_TEST" == "1" ]] &&
+       grep -Eiq "sqlite|cannot find -lsqlite3|fatal error: sqlite3\\.h" "$tmp_err"; then
+      echo "Hint: SQLite test failed under current toolchain." >&2
+      echo "Hint: install sqlite3 dev libs or run with HCC_ENABLE_SQLITE_TEST=0." >&2
+    fi
     exit 1
   fi
 
