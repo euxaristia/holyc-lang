@@ -9,14 +9,19 @@
 #include "ir-types.h"
 #include "util.h"
 
+#define IR_VALUE_FLAG_ADDRESS (1ULL << 0)
+#define IR_VALUE_FLAG_DEREF   (1ULL << 1)
+
 typedef struct AArch64Ctx {
-    u16 stack_size;
+    u32 stack_size;
     u16 current_label_id;
     u16 return_label_id;
+    u32 sp_bias;
     AoStr *buf;
     IrProgram *ir_program;
     Map *var_offsets;
     Set *registers;
+    Set *alloca_tmps;
     Set *string_labels;
     List *string_values;
     u64 int_reg_cnt;
@@ -29,6 +34,7 @@ AArch64Ctx *aarch64CtxNew(IrProgram *ir_program) {
     ctx->buf = aoStrNew();
     ctx->var_offsets = mapNew(8, &map_uint_to_uint_type);
     ctx->registers = setNew(32, &set_uint_type);
+    ctx->alloca_tmps = setNew(64, &set_uint_type);
     ctx->string_labels = setNew(32, &set_cstring_type);
     ctx->string_values = listNew();
     ctx->int_reg_cnt = 0;
@@ -40,6 +46,7 @@ void aarch64CtxRelease(AArch64Ctx *ctx) {
     if (ctx) {
         mapRelease(ctx->var_offsets);
         setRelease(ctx->registers);
+        setRelease(ctx->alloca_tmps);
         setRelease(ctx->string_labels);
         listRelease(ctx->string_values, NULL);
         free(ctx);
@@ -200,6 +207,113 @@ void aarch64MovImm64(AArch64Ctx *ctx, u32 reg, u64 imm) {
     }
 }
 
+static void aarch64AddStackOffset(AArch64Ctx *ctx, u32 addr_reg, u32 scratch_reg, u32 offset) {
+    if (offset <= 4095) {
+        aoStrCatFmt(ctx->buf, "add x%u, sp, #%u\n\t", addr_reg, offset);
+        return;
+    }
+    aarch64MovImm64(ctx, scratch_reg, offset);
+    aoStrCatFmt(ctx->buf, "add x%u, sp, x%u\n\t", addr_reg, scratch_reg);
+}
+
+static void aarch64AddLocalStackOffset(AArch64Ctx *ctx, u32 addr_reg, u32 scratch_reg, u32 offset) {
+    aarch64AddStackOffset(ctx, addr_reg, scratch_reg, offset + ctx->sp_bias);
+}
+
+static void aarch64LoadPtrValue(AArch64Ctx *ctx, IrValue *value, u32 reg);
+
+static void aarch64LoadStackSlotAddress(AArch64Ctx *ctx, IrValue *value, u32 reg) {
+    if (!value) return;
+    if (value->kind != IR_VAL_LOCAL &&
+        value->kind != IR_VAL_PARAM &&
+        value->kind != IR_VAL_TMP) {
+        loggerPanic("AArch64 backend: slot address requested for non-stack value `%s`\n",
+                irValueKindToString(value->kind));
+    }
+    u32 offset = aarch64CtxGetVarOffset(ctx, value->as.var.id);
+    assert(offset != 0 || ctx->stack_size == 0);
+    aarch64AddLocalStackOffset(ctx, 14, 15, offset);
+    aoStrCatFmt(ctx->buf, "mov x%u, x14\n\t", reg);
+}
+
+static void aarch64ComputeLValueAddress(AArch64Ctx *ctx, IrValue *value, u32 reg) {
+    if (!value) return;
+
+    if (value->flags & IR_VALUE_FLAG_DEREF) {
+        aarch64LoadPtrValue(ctx, value, reg);
+        return;
+    }
+
+    switch (value->kind) {
+        case IR_VAL_GLOBAL:
+            if (!value->as.global.name) {
+                loggerPanic("AArch64 backend: global lvalue missing symbol\n");
+            }
+            aoStrCatFmt(ctx->buf, "adrp x%u, %S\n\t", reg, value->as.global.name);
+            aoStrCatFmt(ctx->buf, "add x%u, x%u, :lo12:%S\n\t",
+                        reg, reg, value->as.global.name);
+            return;
+        case IR_VAL_LOCAL:
+        case IR_VAL_PARAM:
+            aarch64LoadStackSlotAddress(ctx, value, reg);
+            return;
+        case IR_VAL_TMP:
+            if (setHas(ctx->alloca_tmps, (void *)(u64)value->as.var.id)) {
+                aarch64LoadStackSlotAddress(ctx, value, reg);
+            } else {
+                aarch64LoadPtrValue(ctx, value, reg);
+            }
+            return;
+        default:
+            loggerPanic("AArch64 backend: cannot form lvalue address from `%s`\n",
+                    irValueKindToString(value->kind));
+    }
+}
+
+static void aarch64AdjustSp(AArch64Ctx *ctx, int is_add, u32 amount) {
+    if (!amount) return;
+    if (amount <= 4095) {
+        aoStrCatFmt(ctx->buf, "%s sp, sp, #%u\n\t", is_add ? "add" : "sub", amount);
+        return;
+    }
+    aarch64MovImm64(ctx, 9, amount);
+    aoStrCatFmt(ctx->buf, "%s sp, sp, x9\n\t", is_add ? "add" : "sub");
+}
+
+static void aarch64EmitGlobals(AArch64Ctx *ctx) {
+    if (!ctx->ir_program || !ctx->ir_program->globals) return;
+    for (u64 i = 0; i < ctx->ir_program->globals->size; ++i) {
+        IrValue *global = ctx->ir_program->globals->entries[i];
+        if (!global || global->kind != IR_VAL_GLOBAL || !global->as.global.name) continue;
+        u64 size = global->flags ? global->flags : 8;
+        if (global->as.global.name->data[0] != '.') {
+            aoStrCatFmt(ctx->buf, ".globl %S\n", global->as.global.name);
+        }
+
+        if (!global->as.global.value) {
+            aoStrCatFmt(ctx->buf, ".bss\n"
+                                  ".align 3\n"
+                                  "%S:\n"
+                                  "\t.skip %u\n",
+                    global->as.global.name, (u32)size);
+            continue;
+        }
+
+        aoStrCatFmt(ctx->buf, ".data\n"
+                              ".align 3\n"
+                              "%S:\n",
+                global->as.global.name);
+        if (global->as.global.value->kind == IR_VAL_CONST_INT) {
+            aoStrCatFmt(ctx->buf, "\t.quad %lld\n", global->as.global.value->as._i64);
+        } else if (global->as.global.value->kind == IR_VAL_CONST_STR &&
+                   global->as.global.value->as.str.label) {
+            aoStrCatFmt(ctx->buf, "\t.quad %S\n", global->as.global.value->as.str.label);
+        } else {
+            aoStrCatFmt(ctx->buf, "\t.skip %u\n", (u32)size);
+        }
+    }
+}
+
 void aarch64LoadIntValue(AArch64Ctx *ctx, IrValue *value, u32 reg) {
     switch (value->kind) {
         case IR_VAL_CONST_INT:
@@ -219,25 +333,37 @@ void aarch64LoadIntValue(AArch64Ctx *ctx, IrValue *value, u32 reg) {
         case IR_VAL_TMP: {
             u32 offset = aarch64CtxGetVarOffset(ctx, value->as.var.id);
             assert(offset != 0 || ctx->stack_size == 0);
+            aarch64AddLocalStackOffset(ctx, 14, 15, offset);
+            if ((value->flags & IR_VALUE_FLAG_ADDRESS) &&
+                ((value->kind == IR_VAL_LOCAL || value->kind == IR_VAL_PARAM) ||
+                 (value->kind == IR_VAL_TMP &&
+                  setHas(ctx->alloca_tmps, (void *)(u64)value->as.var.id)))) {
+                aoStrCatFmt(ctx->buf, "mov x%u, x14\n\t", reg);
+                return;
+            }
             switch (value->type) {
                 case IR_TYPE_I8:
-                    aoStrCatFmt(ctx->buf, "ldrb w%u, [sp, #%u]\n\t", reg, offset);
+                    aoStrCatFmt(ctx->buf, "ldrb w%u, [x14]\n\t", reg);
                     return;
                 case IR_TYPE_I16:
-                    aoStrCatFmt(ctx->buf, "ldrh w%u, [sp, #%u]\n\t", reg, offset);
+                    aoStrCatFmt(ctx->buf, "ldrh w%u, [x14]\n\t", reg);
                     return;
                 case IR_TYPE_I32:
-                    aoStrCatFmt(ctx->buf, "ldr w%u, [sp, #%u]\n\t", reg, offset);
+                    aoStrCatFmt(ctx->buf, "ldrsw x%u, [x14]\n\t", reg);
                     return;
                 case IR_TYPE_I64:
                 case IR_TYPE_PTR:
-                case IR_TYPE_ARRAY:
-                case IR_TYPE_ARRAY_INIT:
-                case IR_TYPE_STRUCT:
                 case IR_TYPE_FUNCTION:
                 case IR_TYPE_ASM_FUNCTION:
                 case IR_TYPE_LABEL:
-                    aoStrCatFmt(ctx->buf, "ldr x%u, [sp, #%u]\n\t", reg, offset);
+                    aoStrCatFmt(ctx->buf, "ldr x%u, [x14]\n\t", reg);
+                    return;
+                case IR_TYPE_ARRAY:
+                case IR_TYPE_ARRAY_INIT:
+                case IR_TYPE_STRUCT:
+                    /* Aggregate values live in stack slots; scalar loads of
+                     * array/struct typed values must materialize the address. */
+                    aoStrCatFmt(ctx->buf, "mov x%u, x14\n\t", reg);
                     return;
                 case IR_TYPE_VOID:
                     /* Defensive fallback: void-typed temporaries can leak
@@ -245,7 +371,7 @@ void aarch64LoadIntValue(AArch64Ctx *ctx, IrValue *value, u32 reg) {
                     aoStrCatFmt(ctx->buf, "mov x%u, #0\n\t", reg);
                     return;
                 case IR_TYPE_F64:
-                    aoStrCatFmt(ctx->buf, "ldr d15, [sp, #%u]\n\t", offset);
+                    aoStrCatFmt(ctx->buf, "ldr d15, [x14]\n\t");
                     aoStrCatFmt(ctx->buf, "fmov x%u, d15\n\t", reg);
                     return;
                 default:
@@ -277,6 +403,15 @@ void aarch64LoadIntValue(AArch64Ctx *ctx, IrValue *value, u32 reg) {
     }
 }
 
+/* Address-flagged pointer temps are l-values in IR.
+ * For memory ops we need the pointer value stored in the slot, not the slot address. */
+static void aarch64LoadPtrValue(AArch64Ctx *ctx, IrValue *value, u32 reg) {
+    if (!value) return;
+    IrValue tmp = *value;
+    tmp.flags &= ~IR_VALUE_FLAG_ADDRESS;
+    aarch64LoadIntValue(ctx, &tmp, reg);
+}
+
 void aarch64StoreIntValue(AArch64Ctx *ctx, IrValue *dest, u32 reg) {
     if (!dest || dest->type == IR_TYPE_VOID) return;
     if (dest->kind != IR_VAL_LOCAL &&
@@ -286,15 +421,16 @@ void aarch64StoreIntValue(AArch64Ctx *ctx, IrValue *dest, u32 reg) {
     }
     u32 offset = aarch64CtxGetVarOffset(ctx, dest->as.var.id);
     assert(offset != 0 || ctx->stack_size == 0);
+    aarch64AddLocalStackOffset(ctx, 14, 15, offset);
     switch (dest->type) {
         case IR_TYPE_I8:
-            aoStrCatFmt(ctx->buf, "strb w%u, [sp, #%u]\n\t", reg, offset);
+            aoStrCatFmt(ctx->buf, "strb w%u, [x14]\n\t", reg);
             return;
         case IR_TYPE_I16:
-            aoStrCatFmt(ctx->buf, "strh w%u, [sp, #%u]\n\t", reg, offset);
+            aoStrCatFmt(ctx->buf, "strh w%u, [x14]\n\t", reg);
             return;
         case IR_TYPE_I32:
-            aoStrCatFmt(ctx->buf, "str w%u, [sp, #%u]\n\t", reg, offset);
+            aoStrCatFmt(ctx->buf, "str w%u, [x14]\n\t", reg);
             return;
         case IR_TYPE_I64:
         case IR_TYPE_PTR:
@@ -304,11 +440,11 @@ void aarch64StoreIntValue(AArch64Ctx *ctx, IrValue *dest, u32 reg) {
         case IR_TYPE_FUNCTION:
         case IR_TYPE_ASM_FUNCTION:
         case IR_TYPE_LABEL:
-            aoStrCatFmt(ctx->buf, "str x%u, [sp, #%u]\n\t", reg, offset);
+            aoStrCatFmt(ctx->buf, "str x%u, [x14]\n\t", reg);
             return;
         case IR_TYPE_F64:
             aoStrCatFmt(ctx->buf, "fmov d15, x%u\n\t", reg);
-            aoStrCatFmt(ctx->buf, "str d15, [sp, #%u]\n\t", offset);
+            aoStrCatFmt(ctx->buf, "str d15, [x14]\n\t");
             return;
         default:
             loggerPanic("Unhandled int store type: %s\n",
@@ -327,7 +463,8 @@ void aarch64LoadFloatValue(AArch64Ctx *ctx, IrValue *value, u32 reg) {
         case IR_VAL_TMP: {
             u32 offset = aarch64CtxGetVarOffset(ctx, value->as.var.id);
             assert(offset != 0 || ctx->stack_size == 0);
-            aoStrCatFmt(ctx->buf, "ldr d%u, [sp, #%u]\n\t", reg, offset);
+            aarch64AddLocalStackOffset(ctx, 14, 15, offset);
+            aoStrCatFmt(ctx->buf, "ldr d%u, [x14]\n\t", reg);
             return;
         }
         case IR_VAL_CONST_FLOAT: {
@@ -361,7 +498,8 @@ void aarch64StoreFloatValue(AArch64Ctx *ctx, IrValue *dest, u32 reg) {
     }
     u32 offset = aarch64CtxGetVarOffset(ctx, dest->as.var.id);
     assert(offset != 0 || ctx->stack_size == 0);
-    aoStrCatFmt(ctx->buf, "str d%u, [sp, #%u]\n\t", reg, offset);
+    aarch64AddLocalStackOffset(ctx, 14, 15, offset);
+    aoStrCatFmt(ctx->buf, "str d%u, [x14]\n\t", reg);
 }
 
 void aarch64GenStore(AArch64Ctx *ctx, IrValue *dest, char *reg) {
@@ -437,6 +575,55 @@ void aarch64GenInstr(AArch64Ctx *ctx, IrInstr *instr, IrInstr *next_instr, IrBlo
             break;
 
         case IR_STORE: {
+            if (instr->dst->kind == IR_VAL_GLOBAL && instr->dst->as.global.name) {
+                aoStrCatFmt(ctx->buf, "adrp x9, %S\n\t", instr->dst->as.global.name);
+                aoStrCatFmt(ctx->buf, "add x9, x9, :lo12:%S\n\t", instr->dst->as.global.name);
+                if (aarch64IsFloatType(instr->r1->type)) {
+                    aarch64LoadFloatValue(ctx, instr->r1, 8);
+                    aoStrCatFmt(ctx->buf, "str d8, [x9]\n\t");
+                } else {
+                    aarch64LoadIntValue(ctx, instr->r1, 8);
+                    switch (instr->r1->type) {
+                        case IR_TYPE_I8:
+                            aoStrCatFmt(ctx->buf, "strb w8, [x9]\n\t");
+                            break;
+                        case IR_TYPE_I16:
+                            aoStrCatFmt(ctx->buf, "strh w8, [x9]\n\t");
+                            break;
+                        case IR_TYPE_I32:
+                            aoStrCatFmt(ctx->buf, "str w8, [x9]\n\t");
+                            break;
+                        default:
+                            aoStrCatFmt(ctx->buf, "str x8, [x9]\n\t");
+                            break;
+                    }
+                }
+                break;
+            }
+            if (instr->dst->flags & IR_VALUE_FLAG_ADDRESS) {
+                aarch64ComputeLValueAddress(ctx, instr->dst, 9);
+                if (aarch64IsFloatType(instr->r1->type)) {
+                    aarch64LoadFloatValue(ctx, instr->r1, 8);
+                    aoStrCatFmt(ctx->buf, "str d8, [x9]\n\t");
+                } else {
+                    aarch64LoadIntValue(ctx, instr->r1, 8);
+                    switch (instr->r1->type) {
+                        case IR_TYPE_I8:
+                            aoStrCatFmt(ctx->buf, "strb w8, [x9]\n\t");
+                            break;
+                        case IR_TYPE_I16:
+                            aoStrCatFmt(ctx->buf, "strh w8, [x9]\n\t");
+                            break;
+                        case IR_TYPE_I32:
+                            aoStrCatFmt(ctx->buf, "str w8, [x9]\n\t");
+                            break;
+                        default:
+                            aoStrCatFmt(ctx->buf, "str x8, [x9]\n\t");
+                            break;
+                    }
+                }
+                break;
+            }
             if (aarch64IsFloatType(instr->dst->type)) {
                 aarch64LoadFloatValue(ctx, instr->r1, 0);
                 aarch64StoreFloatValue(ctx, instr->dst, 0);
@@ -448,6 +635,31 @@ void aarch64GenInstr(AArch64Ctx *ctx, IrInstr *instr, IrInstr *next_instr, IrBlo
         }
 
         case IR_LOAD: {
+            if ((instr->r1->flags & IR_VALUE_FLAG_ADDRESS) ||
+                instr->r1->kind == IR_VAL_GLOBAL) {
+                aarch64ComputeLValueAddress(ctx, instr->r1, 9);
+                if (aarch64IsFloatType(instr->dst->type)) {
+                    aoStrCatFmt(ctx->buf, "ldr d8, [x9]\n\t");
+                    aarch64StoreFloatValue(ctx, instr->dst, 8);
+                } else {
+                    switch (instr->dst->type) {
+                        case IR_TYPE_I8:
+                            aoStrCatFmt(ctx->buf, "ldrb w8, [x9]\n\t");
+                            break;
+                        case IR_TYPE_I16:
+                            aoStrCatFmt(ctx->buf, "ldrh w8, [x9]\n\t");
+                            break;
+                        case IR_TYPE_I32:
+                            aoStrCatFmt(ctx->buf, "ldr w8, [x9]\n\t");
+                            break;
+                        default:
+                            aoStrCatFmt(ctx->buf, "ldr x8, [x9]\n\t");
+                            break;
+                    }
+                    aarch64StoreIntValue(ctx, instr->dst, 8);
+                }
+                break;
+            }
             if (aarch64IsFloatType(instr->dst->type)) {
                 aarch64LoadFloatValue(ctx, instr->r1, 8);
                 aarch64StoreFloatValue(ctx, instr->dst, 8);
@@ -490,7 +702,8 @@ void aarch64GenInstr(AArch64Ctx *ctx, IrInstr *instr, IrInstr *next_instr, IrBlo
             }
             u32 call_stack_size = (u32)alignTo((int)stack_bytes, 16);
             if (call_stack_size) {
-                aoStrCatFmt(ctx->buf, "sub sp, sp, #%u\n\t", call_stack_size);
+                aarch64AdjustSp(ctx, 0, call_stack_size);
+                ctx->sp_bias = call_stack_size;
             }
 
             gp_reg = 0;
@@ -504,7 +717,8 @@ void aarch64GenInstr(AArch64Ctx *ctx, IrInstr *instr, IrInstr *next_instr, IrBlo
                         fp_reg++;
                     } else {
                         aarch64LoadFloatValue(ctx, arm, 15);
-                        aoStrCatFmt(ctx->buf, "str d15, [sp, #%u]\n\t", stack_offset);
+                        aarch64AddStackOffset(ctx, 14, 12, stack_offset);
+                        aoStrCatFmt(ctx->buf, "str d15, [x14]\n\t");
                         stack_offset += 8;
                     }
                 } else {
@@ -513,17 +727,24 @@ void aarch64GenInstr(AArch64Ctx *ctx, IrInstr *instr, IrInstr *next_instr, IrBlo
                         gp_reg++;
                     } else {
                         aarch64LoadIntValue(ctx, arm, 9);
-                        aoStrCatFmt(ctx->buf, "str x9, [sp, #%u]\n\t", stack_offset);
+                        aarch64AddStackOffset(ctx, 14, 12, stack_offset);
+                        aoStrCatFmt(ctx->buf, "str x9, [x14]\n\t");
                         stack_offset += 8;
                     }
                 }
             }
 
-            AoStr *target_name = aarch64NormaliseFunctionName(args->label);
-            aoStrCatFmt(ctx->buf, "bl %S\n\t", target_name);
-            aoStrRelease(target_name);
+            if (instr->r2) {
+                aarch64LoadIntValue(ctx, instr->r2, 16);
+                aoStrCatFmt(ctx->buf, "blr x16\n\t");
+            } else {
+                AoStr *target_name = aarch64NormaliseFunctionName(args->label);
+                aoStrCatFmt(ctx->buf, "bl %S\n\t", target_name);
+                aoStrRelease(target_name);
+            }
             if (call_stack_size) {
-                aoStrCatFmt(ctx->buf, "add sp, sp, #%u\n\t", call_stack_size);
+                ctx->sp_bias = 0;
+                aarch64AdjustSp(ctx, 1, call_stack_size);
             }
             if (instr->dst) {
                 if (aarch64IsFloatType(instr->dst->type)) {
@@ -886,19 +1107,55 @@ void aarch64GenInstr(AArch64Ctx *ctx, IrInstr *instr, IrInstr *next_instr, IrBlo
 
 void aarch64EmitFunction(AArch64Ctx *ctx, IrFunction *func) {
     AoStr *func_name = aarch64NormaliseFunctionName(func->name);
-    aoStrCatFmt(ctx->buf, ".globl %S\n"
+    aoStrCatFmt(ctx->buf, ".text\n"
+                          ".globl %S\n"
                           "%S:\n\t", func_name, func_name);
     aoStrRelease(func_name);
 
-    u16 local_stack_size = (u16)alignTo(func->stack_space, 16);
+    setRelease(ctx->alloca_tmps);
+    ctx->alloca_tmps = setNew(64, &set_uint_type);
+
+    u32 required_stack_size = 0;
+    Map *extra_tmps = mapNew(32, &map_uint_to_uint_type);
+    MapIter var_it;
+    mapIterInit(func->variables, &var_it);
+    while (mapIterNext(&var_it)) {
+        IrValue *val = var_it.node->value;
+        if (!val) continue;
+        u32 var_size = (u32)alignTo((int)val->as.var.size, 8);
+        required_stack_size += var_size;
+    }
+
+    listForEach(func->blocks) {
+        IrBlock *block = listValue(IrBlock *, it);
+        listForEach(block->instructions) {
+            IrInstr *instr = listValue(IrInstr *, it);
+            if (instr->op == IR_ALLOCA &&
+                instr->dst &&
+                instr->dst->kind == IR_VAL_TMP) {
+                setAdd(ctx->alloca_tmps, (void *)(u64)instr->dst->as.var.id);
+            }
+            IrValue *candidates[3] = { instr->dst, instr->r1, instr->r2 };
+            for (int i = 0; i < 3; ++i) {
+                IrValue *val = candidates[i];
+                if (!val || val->kind != IR_VAL_TMP) continue;
+                u32 id = val->as.var.id;
+                if (mapHasInt(func->variables, id) || mapHasInt(extra_tmps, id)) continue;
+                u32 raw_size = val->as.var.size ? val->as.var.size : 8;
+                u32 var_size = (u32)alignTo((int)raw_size, 8);
+                mapAddIntOrErr(extra_tmps, id, (void *)(u64)var_size);
+                required_stack_size += var_size;
+            }
+        }
+    }
+
+    u32 local_stack_size = (u32)alignTo((int)required_stack_size, 16);
     ctx->stack_size = local_stack_size;
     ctx->return_label_id = ctx->current_label_id++;
 
     aoStrCatFmt(ctx->buf, "stp x29, x30, [sp, #-16]!\n\t");
     aoStrCatFmt(ctx->buf, "mov x29, sp\n\t");
-    if (local_stack_size) {
-        aoStrCatFmt(ctx->buf, "sub sp, sp, #%u\n\t", local_stack_size);
-    }
+    aarch64AdjustSp(ctx, 0, local_stack_size);
 
     u32 stack_offset = local_stack_size;
 
@@ -912,6 +1169,15 @@ void aarch64EmitFunction(AArch64Ctx *ctx, IrFunction *func) {
         aarch64CtxSetVarOffset(ctx, var->id, stack_offset);
     }
 
+    mapIterInit(extra_tmps, &it);
+    while (mapIterNext(&it)) {
+        u32 id = (u32)(u64)it.node->key;
+        u32 var_size = (u32)(u64)it.node->value;
+        stack_offset -= var_size;
+        aarch64CtxSetVarOffset(ctx, id, stack_offset);
+    }
+    mapRelease(extra_tmps);
+
     u32 gp_reg = 0;
     u32 fp_reg = 0;
     u32 stack_param_offset = 0;
@@ -923,7 +1189,8 @@ void aarch64EmitFunction(AArch64Ctx *ctx, IrFunction *func) {
                 fp_reg++;
             } else {
                 u32 incoming_offset = (u32)local_stack_size + 16 + stack_param_offset;
-                aoStrCatFmt(ctx->buf, "ldr d15, [sp, #%u]\n\t", incoming_offset);
+                aarch64AddStackOffset(ctx, 14, 15, incoming_offset);
+                aoStrCatFmt(ctx->buf, "ldr d15, [x14]\n\t");
                 aarch64StoreFloatValue(ctx, param, 15);
                 stack_param_offset += 8;
             }
@@ -933,7 +1200,8 @@ void aarch64EmitFunction(AArch64Ctx *ctx, IrFunction *func) {
                 gp_reg++;
             } else {
                 u32 incoming_offset = (u32)local_stack_size + 16 + stack_param_offset;
-                aoStrCatFmt(ctx->buf, "ldr x15, [sp, #%u]\n\t", incoming_offset);
+                aarch64AddStackOffset(ctx, 14, 15, incoming_offset);
+                aoStrCatFmt(ctx->buf, "ldr x15, [x14]\n\t");
                 aarch64StoreIntValue(ctx, param, 15);
                 stack_param_offset += 8;
             }
@@ -944,6 +1212,7 @@ void aarch64EmitFunction(AArch64Ctx *ctx, IrFunction *func) {
 
     listForEach(func->blocks) {
         IrBlock *block = listValue(IrBlock *, it);
+        int emitted_terminator = 0;
         if (ctx->buf->data[ctx->buf->len - 1] == '\t') {
             ctx->buf->len--;
         }
@@ -959,6 +1228,20 @@ void aarch64EmitFunction(AArch64Ctx *ctx, IrFunction *func) {
              * some instructions */
             if (instr->op == IR_NOP) continue;
             aarch64GenInstr(ctx, instr, next_instr, block);
+            emitted_terminator = instr->op == IR_RET ||
+                                 instr->op == IR_BR ||
+                                 instr->op == IR_JMP ||
+                                 instr->op == IR_LOOP ||
+                                 instr->op == IR_SWITCH;
+        }
+
+        /* IR exit blocks are often intentionally empty and rely on an
+         * explicit jump to the shared function epilogue. */
+        if (!emitted_terminator) {
+            Map *successors = irBlockGetSuccessors(func, block);
+            if (!successors || successors->size == 0) {
+                aoStrCatFmt(ctx->buf, "b .Lret%u\n\t", ctx->return_label_id);
+            }
         }
     }
 
@@ -966,9 +1249,14 @@ void aarch64EmitFunction(AArch64Ctx *ctx, IrFunction *func) {
         ctx->buf->len--;
     }
     aoStrCatFmt(ctx->buf, ".Lret%u:\n\t", ctx->return_label_id);
-    if (local_stack_size) {
-        aoStrCatFmt(ctx->buf, "add sp, sp, #%u\n\t", local_stack_size);
+    if (func->return_value && func->return_value->type != IR_TYPE_VOID) {
+        if (aarch64IsFloatType(func->return_value->type)) {
+            aarch64LoadFloatValue(ctx, func->return_value, 0);
+        } else {
+            aarch64LoadIntValue(ctx, func->return_value, 0);
+        }
     }
+    aarch64AdjustSp(ctx, 1, local_stack_size);
     aoStrCatFmt(ctx->buf, "ldp x29, x30, [sp], #16\n\t");
     aoStrCatFmt(ctx->buf, "ret\n\t");
 }
@@ -978,6 +1266,7 @@ AoStr *aarch64GenCode(IrCtx *ir_ctx) {
     AArch64Ctx *ctx = aarch64CtxNew(program);
     aarch64CollectConstStrings(ctx, program);
     aarch64EmitConstStrings(ctx);
+    aarch64EmitGlobals(ctx);
     for (u64 i = 0; i < program->functions->size; ++i) {
         IrFunction *func = program->functions->entries[i];
         aarch64EmitFunction(ctx, func);

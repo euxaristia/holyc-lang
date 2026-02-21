@@ -438,7 +438,17 @@ AoStr *irInstrToString(IrInstr *ir_instr) {
                 aoStrCatLen(buf,str_lit("    "));
             }
 
-            if (ir_instr->dst) {
+            if (ir_instr->r2) {
+                AoStr *target_str = irValueToString(ir_instr->r2);
+                if (ir_instr->dst) {
+                    AoStr *ir_ret_var = irValueToString(ir_instr->dst);
+                    aoStrCatFmt(buf, "%s %S, *%S", op, ir_ret_var, target_str);
+                    aoStrRelease(ir_ret_var);
+                } else {
+                    aoStrCatFmt(buf, "%s *%S", op, target_str);
+                }
+                aoStrRelease(target_str);
+            } else if (ir_instr->dst) {
                 AoStr *ir_ret_var = irValueToString(ir_instr->dst);
                 aoStrCatFmt(buf, "%s %S, %S", op, ir_ret_var, ir_instr->r1->as.array.label);
                 aoStrRelease(ir_ret_var);

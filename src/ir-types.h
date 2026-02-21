@@ -274,6 +274,9 @@ typedef struct IrCtx {
     Cctrl *cc;
     /* Intra-function label -> block mapping for goto/label lowering. */
     Map *label_blocks;
+    /* Stacks of active control-flow targets for break/continue. */
+    List *break_targets;
+    List *continue_targets;
 } IrCtx;
 
 

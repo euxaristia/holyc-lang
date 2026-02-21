@@ -124,6 +124,12 @@ Run the full AArch64 verification gate (assemble sweep + SQLite + emitted-opcode
 ```
 make aarch64-verify
 ```
+The AArch64 sweep includes large-arity regression tests to guard call spill/load
+offset handling:
+- `src/tests/37_large_call_spill.HC` (integer args)
+- `src/tests/39_large_float_call_spill.HC` (float args)
+- `src/tests/40_large_funptr_call_spill.HC` (indirect `funptr` calls)
+- `src/tests/41_large_stack_global_memops.HC` (large stack-frame + global load/store)
 
 ### IR Cleanup Note
 The following IR opcodes were removed as dead code:

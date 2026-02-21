@@ -730,9 +730,8 @@ Ast *astVarArgs(void) {
     Ast *ast = astNew();
     ast->kind = AST_VAR_ARGS;
     ast->type = NULL;
-    AstType *int_clone = astTypeCopy(ast_int_type);
-    ast->argc = astLVar(int_clone,"argc",4);
-    ast->argv = astLVar(astMakeArrayType(int_clone,0),"argv",4);
+    ast->argc = astLVar(astTypeCopy(ast_int_type),"argc",4);
+    ast->argv = astLVar(astMakePointerType(astMakePointerType(ast_u8_type)),"argv",4);
     ast->argv->type->has_var_args = 1;
     ast->argc->type->has_var_args = 1;
     return ast;

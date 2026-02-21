@@ -1228,16 +1228,36 @@ Ast *parseUnaryExpr(Cctrl *cc) {
 
         /* XXX: This feels wrong but allows things like:
          * !arr[0][1][2] to work properly */
-        if (tokenPunctIs(peek, '[') && !(unary_op == AST_UN_OP_ADDR_OF ||
-                                         unary_op == AST_UN_OP_DEREF)) {
+        if (peek && tokenPunctIs(peek, '[') && !(unary_op == AST_UN_OP_ADDR_OF ||
+                                                 unary_op == AST_UN_OP_DEREF)) {
             operand = parseExpr(cc,16);
         } else {
             operand = parseUnaryExpr(cc);
             peek = cctrlTokenPeek(cc);
-            if (tokenPunctIs(peek, '[') && (operand->kind == AST_CLASS_REF ||
-                                            operand->type->kind == AST_TYPE_ARRAY)) {
+            if (peek && operand &&
+                    tokenPunctIs(peek, '[') &&
+                    (operand->kind == AST_CLASS_REF ||
+                     operand->type->kind == AST_TYPE_ARRAY)) {
                 cctrlTokenGet(cc);
                 operand = parseSubscriptExpr(cc, operand);
+            }
+        }
+
+        if (!operand) {
+            char *opstr = lexemePunctToStringWithFlags(tok->i64,0);
+            Lexeme *invalid = cctrlTokenPeek(cc);
+            if (invalid) {
+                char *msg = mprintf("Unary operator `%s` requires an operand",opstr);
+                cctrlRaiseSuggestion(cc,msg,
+                        "Expected expression after unary `%s` got %s `%.*s`",
+                        opstr,
+                        lexemeTypeToString(invalid->tk_type),
+                        invalid->len,
+                        invalid->start);
+            } else {
+                cctrlRaiseException(cc,
+                        "Expected expression after unary operator `%s`",
+                        opstr);
             }
         }
 
