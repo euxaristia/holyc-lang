@@ -740,6 +740,38 @@ IrValue *irBinOpExpr(IrCtx *ctx, Ast *ast) {
             loggerPanic("Assignment destination could not be lowered: %s\n",
                     astToString(ast->left));
         }
+        if (ast->left && ast->left->type) {
+            IrValueType lhs_type = irConvertType(ast->left->type);
+            if (rhs && rhs->type != lhs_type) {
+                IrValue *coerced = irTmp(lhs_type, ast->left->type->size);
+                IrOp cast_op = IR_BITCAST;
+
+                if (irIsInt(rhs->type) && irIsInt(lhs_type)) {
+                    int src_size = irGetIntSize(rhs->type);
+                    int dst_size = irGetIntSize(lhs_type);
+                    if (src_size > dst_size) {
+                        cast_op = IR_TRUNC;
+                    } else if (src_size < dst_size) {
+                        int src_signed = (ast->right && ast->right->type) ? ast->right->type->issigned : 0;
+                        cast_op = src_signed ? IR_SEXT : IR_ZEXT;
+                    }
+                } else if (irIsFloat(rhs->type) && irIsFloat(lhs_type)) {
+                    cast_op = IR_BITCAST;
+                } else if (irIsFloat(rhs->type) && irIsInt(lhs_type)) {
+                    cast_op = (ast->left->type && ast->left->type->issigned) ? IR_FPTOSI : IR_FPTOUI;
+                } else if (irIsInt(rhs->type) && irIsFloat(lhs_type)) {
+                    int src_signed = (ast->right && ast->right->type) ? ast->right->type->issigned : 0;
+                    cast_op = src_signed ? IR_SITOFP : IR_UITOFP;
+                } else if (rhs->type == IR_TYPE_PTR && irIsInt(lhs_type)) {
+                    cast_op = IR_PTRTOINT;
+                } else if (irIsInt(rhs->type) && lhs_type == IR_TYPE_PTR) {
+                    cast_op = IR_INTTOPTR;
+                }
+
+                irBlockAddInstr(ctx, irInstrNew(cast_op, coerced, rhs, NULL));
+                rhs = coerced;
+            }
+        }
         IrInstr *ir_store = irStore(dst, rhs);
         irBlockAddInstr(ctx, ir_store);
         return rhs;

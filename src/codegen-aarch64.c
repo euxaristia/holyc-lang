@@ -947,10 +947,43 @@ void aarch64GenInstr(AArch64Ctx *ctx, IrInstr *instr, IrInstr *next_instr, IrBlo
             break;
         }
 
-        case IR_ZEXT:
+        case IR_ZEXT: {
+            aarch64LoadIntValue(ctx, instr->r1, 0);
+            switch (instr->r1 ? instr->r1->type : IR_TYPE_VOID) {
+                case IR_TYPE_I8:
+                    aoStrCatFmt(ctx->buf, "uxtb x8, w0\n\t");
+                    break;
+                case IR_TYPE_I16:
+                    aoStrCatFmt(ctx->buf, "uxth x8, w0\n\t");
+                    break;
+                case IR_TYPE_I32:
+                    aoStrCatFmt(ctx->buf, "mov w8, w0\n\t");
+                    break;
+                default:
+                    aoStrCatFmt(ctx->buf, "mov x8, x0\n\t");
+                    break;
+            }
+            if (instr->dst) aarch64StoreIntValue(ctx, instr->dst, 8);
+            aarch64ClearIntRegisters(ctx);
+            break;
+        }
+
         case IR_SEXT: {
             aarch64LoadIntValue(ctx, instr->r1, 0);
-            aoStrCatFmt(ctx->buf, "mov x8, x0\n\t");
+            switch (instr->r1 ? instr->r1->type : IR_TYPE_VOID) {
+                case IR_TYPE_I8:
+                    aoStrCatFmt(ctx->buf, "sxtb x8, w0\n\t");
+                    break;
+                case IR_TYPE_I16:
+                    aoStrCatFmt(ctx->buf, "sxth x8, w0\n\t");
+                    break;
+                case IR_TYPE_I32:
+                    aoStrCatFmt(ctx->buf, "sxtw x8, w0\n\t");
+                    break;
+                default:
+                    aoStrCatFmt(ctx->buf, "mov x8, x0\n\t");
+                    break;
+            }
             if (instr->dst) aarch64StoreIntValue(ctx, instr->dst, 8);
             aarch64ClearIntRegisters(ctx);
             break;
