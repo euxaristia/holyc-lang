@@ -70,7 +70,7 @@ class FzFString
 
 class FzFTerm
 {
-  FzFResult *(*fn)(FzFResult *res, Bool case_sensitive,
+  U0 (*fn)(FzFResult *res, Bool case_sensitive,
       FzFString *text, FzFString *pattern, FzFPosition *pos, FzFSlab *slab);
   Bool inv;
   U8 *ptr;
@@ -701,7 +701,7 @@ FzFPattern *FzFParsePattern(I32 case_mode, U8 *pattern, Bool fuzzy=TRUE)
 
   U8 *pattern_copy = str_replace(pattern, "\\ ", "\t");
   U8 *delim = " ";
-  U8 *ptr = strtok(pattern_copy, delim);
+  U8 *ptr = StrTok(pattern_copy, delim);
 
   FzFTermSet *set = CAlloc(sizeof(FzFTermSet));
   set->entries = ListNew();
@@ -709,7 +709,7 @@ FzFPattern *FzFParsePattern(I32 case_mode, U8 *pattern, Bool fuzzy=TRUE)
   Bool switch_set = FALSE;
   Bool after_bar = FALSE;
   while (ptr != NULL) {
-    FzFResult *(*fn)(FzFResult *res, Bool _case_sensitive,
+    U0 (*fn)(FzFResult *res, Bool _case_sensitive,
         FzFString *_text, FzFString *_pattern,
         FzFPosition *_pos, FzFSlab *_slab) = &FzFFuzzyMatchV1;
 
@@ -743,7 +743,7 @@ FzFPattern *FzFParsePattern(I32 case_mode, U8 *pattern, Bool fuzzy=TRUE)
     if (set->size > 0 && !after_bar && StrCmp(text, "|") == 0) {
       switch_set = FALSE;
       after_bar = TRUE;
-      ptr = strtok(NULL, delim);
+      ptr = StrTok(NULL, delim);
       if (og_str) {
         Free(og_str);
       }
@@ -810,7 +810,7 @@ FzFPattern *FzFParsePattern(I32 case_mode, U8 *pattern, Bool fuzzy=TRUE)
       }
     }
 
-    ptr = strtok(NULL, delim);
+    ptr = StrTok(NULL, delim);
   }
   if (set->size > 0) {
     ListAppend(pat_obj->entries,set);

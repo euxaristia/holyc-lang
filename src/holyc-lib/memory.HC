@@ -1,6 +1,15 @@
 /* Yup we can mix #define's and assembly */
 #define ALIGN_16 0xFFFFFFFFFFFFFFF0
 
+public extern "c" U0 *memchr(U0 *__s, I32 __c, U64 __n);
+public extern "c" I32 memcmp(U0 *__s1, U0 *__s2, U64 __n);
+public extern "c" U0 *memmove(U0 *__dst, U0 *__src, U64 __len);
+public extern "c" U0 free(U0 *ptr);
+public extern "c" U0 *malloc(U64 size);
+public extern "c" U0 *calloc(U64 count, U64 size);
+public extern "c" U0 *realloc(U0 *ptr, U64 size);
+
+#ifdef IS_X86_64
 asm {
 _MALLOC::
     PUSHQ  RBP
@@ -111,13 +120,6 @@ _MEMCPY::
     RET 
 }
 
-public extern "c" U0 *memchr(U0 *__s, I32 __c, U64 __n);
-public extern "c" I32 memcmp(U0 *__s1, U0 *__s2, U64 __n);
-public extern "c" U0 *memmove(U0 *__dst, U0 *__src, U64 __len);
-public extern "c" U0 free(U0 *ptr);
-public extern "c" U0 *malloc(U64 size);
-public extern "c" U0 *calloc(U64 count, U64 size);
-public extern "c" U0 *realloc(U0 *ptr, U64 size);
 public _extern _MALLOC U0 *MAlloc(U64 size);
 public _extern _FREE U0 Free(U0 *ptr);
 public _extern _REALLOC U0 *ReAlloc(U0 *ptr, U64 new_size);
@@ -125,3 +127,65 @@ public _extern _CALLOC U0 *CAlloc(U64 new_size);
 public _extern _MSIZE U64 MSize(U0 *ptr);
 public _extern _MEMCPY U0 *MemCpy(U0 *dst, U0 *src, U64 len);
 public _extern _MEMSET U0 *MemSet(U0 *dst, I32 ch, U64 len);
+
+#else
+
+public U0 *MAlloc(U64 size);
+public U0 Free(U0 *ptr);
+public U0 *ReAlloc(U0 *ptr, U64 new_size);
+public U0 *CAlloc(U64 size);
+public U64 MSize(U0 *ptr);
+public U0 *MemCpy(U0 *dst, U0 *src, U64 len);
+public U0 *MemSet(U0 *dst, I32 ch, U64 len);
+
+public U0 *MAlloc(U64 size) {
+  U64 *ptr = malloc(size + 8);
+  if (!ptr) return NULL;
+  *ptr = size;
+  return ptr + 1;
+}
+
+public U0 Free(U0 *ptr) {
+  if (ptr) {
+    free(ptr - 8);
+  }
+}
+
+public U0 *ReAlloc(U0 *ptr, U64 new_size) {
+  if (!ptr) return MAlloc(new_size);
+  U64 *old_ptr = ptr - 8;
+  U64 *new_ptr = realloc(old_ptr, new_size + 8);
+  if (!new_ptr) return NULL;
+  *new_ptr = new_size;
+  return new_ptr + 1;
+}
+
+public U0 *CAlloc(U64 size) {
+  U0 *ptr = MAlloc(size);
+  if (ptr) {
+    MemSet(ptr, 0, size);
+  }
+  return ptr;
+}
+
+public U64 MSize(U0 *ptr) {
+  if (!ptr) return 0;
+  U64 *p = ptr - 8;
+  return *p;
+}
+
+public U0 *MemCpy(U0 *dst, U0 *src, U64 len) {
+  return memmove(dst, src, len);
+}
+
+public U0 *MemSet(U0 *dst, I32 ch, U64 len) {
+  U8 *p = dst;
+  while (len > 0) {
+    *p = ch;
+    p++;
+    len--;
+  }
+  return dst;
+}
+
+#endif

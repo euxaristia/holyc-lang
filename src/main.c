@@ -240,12 +240,18 @@ void emitFile(AoStr *asmbuf, CliArgs *args) {
             args->output_filename = "a.out";
         }
 
-        if (args->clibs) {
-            aoStrCatPrintf(cmd, "%s -L"INSTALL_PREFIX"/lib %s %s "CLIBS" -o %s", 
-                    cc, ASM_TMP_FILE,args->clibs,args->output_filename);
+        char *hcc_lib_path = getenv("HCC_LIB_PATH");
+        if (hcc_lib_path) {
+            aoStrCatPrintf(cmd, "%s -L%s -L"INSTALL_PREFIX"/lib %s %s "CLIBS" -o %s", 
+                    cc, hcc_lib_path, ASM_TMP_FILE, args->clibs ? args->clibs : "", args->output_filename);
         } else {
-            aoStrCatPrintf(cmd, "%s -L"INSTALL_PREFIX"/lib %s "CLIBS" -o %s", 
-                    cc, ASM_TMP_FILE, args->output_filename);
+            if (args->clibs) {
+                aoStrCatPrintf(cmd, "%s -L"INSTALL_PREFIX"/lib %s %s "CLIBS" -o %s", 
+                        cc, ASM_TMP_FILE,args->clibs,args->output_filename);
+            } else {
+                aoStrCatPrintf(cmd, "%s -L"INSTALL_PREFIX"/lib %s "CLIBS" -o %s", 
+                        cc, ASM_TMP_FILE, args->output_filename);
+            }
         }
         safeSystem(cmd->data);
     }
@@ -325,6 +331,10 @@ int main(int argc, char **argv) {
     cliArgsInit(&args);
     /* now parse cli options */
     args.install_dir = INSTALL_PREFIX;
+    char *hcc_include_path = getenv("HCC_INCLUDE_PATH");
+    if (hcc_include_path) {
+        args.install_dir = hcc_include_path;
+    }
     cliParseArgs(&args,argc,argv);
 
     if (args.assemble) {

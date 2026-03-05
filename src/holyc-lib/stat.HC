@@ -3,6 +3,42 @@
 #define RM_FORCE    0x4
 #define INTERNAL_RM_DIRECORY 0x6
 
+#define S_IFMT      0xF000
+#define S_IFDIR     0x4000
+#define S_ISUID     0x800
+#define S_IRWXU     0x1C0
+#define S_IRWXG     0x38
+#define S_IROTH     0x4
+#define S_IXOTH     0x1
+#define MKDIR_DEFAULT (S_ISUID|S_IRWXU|S_IRWXG|S_IROTH|S_IXOTH)
+
+class cStat
+{
+  U64 st_dev;
+  U64 st_ino;
+  U64 st_nlink;
+  U32 st_mode;
+  U32 st_uid;
+  U32 st_gid;
+  I32 __pad0;
+  U64 st_rdev;
+  I64 st_size;
+  I64 st_blksize;
+  I64 st_blocks;
+  I64 st_atim_sec;
+  I64 st_atim_nsec;
+  I64 st_mtim_sec;
+  I64 st_mtim_nsec;
+  I64 st_ctim_sec;
+  I64 st_ctim_nsec;
+  I64 __glibc_reserved[3];
+};
+
+extern "c" I32 stat(U8 *pathname, cStat *st);
+extern "c" I32 mkdir(U8 *pathname, I32 mode);
+extern "c" I32 rmdir(U8 *pathname);
+extern "c" I32 unlink(U8 *pathname);
+
 static I32 MkDirIfNotExist(U8 *path, I32 mode=MKDIR_DEFAULT)
 {
   cStat st;

@@ -463,9 +463,15 @@ public U0 ThreadPoolRelease(ThreadPool *pool);
 public extern "c" I32 wait(I32 *statloc);
 public extern "c" I32 waitpid(I32 pid, I32 *statlock, I32 options);
 public extern "c" I32 fork();
+#ifdef IS_X86_64
 public _extern _EXIT U0 Exit(I64 exit_code = EXIT_FAIL);
 public _extern _WRITE I64 Write(I64 fd, U8 *buf, I64 len);
 public _extern _SYSTEM I64 System(U8 *command);
+#else
+public U0 Exit(I64 exit_code = EXIT_FAIL);
+public I64 Write(I64 fd, U8 *buf, I64 len);
+public I64 System(U8 *command);
+#endif
 
 public extern "c" F64 acos(F64 f1);
 public extern "c" F64 asin(F64 f1);
@@ -521,8 +527,13 @@ public extern "c" F64 fdim(F64 f1, F64 f2);
 public extern "c" F64 fmax(F64 f1, F64 f2);
 public extern "c" F64 fmin(F64 f1, F64 f2);
 public extern "c" F64 fma(F64 f1, F64 f2, F64 f3);
+#ifdef IS_X86_64
 public _extern _ABS U64 Abs(I64 num);
 public _extern _GCD U64 Gcd(I64 a, I64 b);
+#else
+public U64 Abs(I64 num);
+public U64 Gcd(I64 a, I64 b);
+#endif
 public F64 Pow(F64 a, I64 b);
 public U64 ModU64(U64 *k, U64 m);
 
@@ -531,6 +542,7 @@ public extern "c" I32 memcmp(U0 *__s1, U0 *__s2, U64 __n);
 public extern "c" U0 *memmove(U0 *__dst, U0 *__src, U64 __len);
 public extern "c" U0 free(U0 *ptr);
 public extern "c" U0 *malloc(U64 size);
+#ifdef IS_X86_64
 public _extern _MALLOC U0 *MAlloc(U64 size);
 public _extern _FREE U0 Free(U0 *ptr);
 public _extern _REALLOC U0 *ReAlloc(U0 *ptr, U64 new_size);
@@ -538,6 +550,15 @@ public _extern _CALLOC U0 *CAlloc(U64 new_size);
 public _extern _MSIZE U64 MSize(U0 *ptr);
 public _extern _MEMCPY U0 *MemCpy(U0 *dst, U0 *src, U64 len);
 public _extern _MEMSET U0 *MemSet(U0 *dst, I32 ch, U64 len);
+#else
+public U0 *MAlloc(U64 size);
+public U0 Free(U0 *ptr);
+public U0 *ReAlloc(U0 *ptr, U64 new_size);
+public U0 *CAlloc(U64 new_size);
+public U64 MSize(U0 *ptr);
+public U0 *MemCpy(U0 *dst, U0 *src, U64 len);
+public U0 *MemSet(U0 *dst, I32 ch, U64 len);
+#endif
 
 #define STR_LEN 256
 
@@ -587,6 +608,7 @@ extern "c" U8 *strstr(U8 *__big, U8 *__little);
 extern "c" U8 *strtok(U8 *__str, U8 *__sep);
 extern "c" U64 strxfrm(U8 *__s1, U8 *__s2, U64 __n);
 
+#ifdef IS_X86_64
 public _extern _STRLEN_FAST U64 StrLen(U8 *buf);
 public _extern _STRNCMP I64 StrNCmp(U8 *s1, U8 *s2, I64 len);
 public _extern _STRNICMP I64 StrNICmp(U8 *s1, U8 *s2, I64 len);
@@ -597,6 +619,18 @@ public _extern _TOUPPER U8 ToUpper(U8 ch);
 public _extern _ISSPACE Bool IsSpace(U8 ch);
 public _extern _STRHASH U64 StrHash(U8 *str);
 public _extern _ATOI I64 Atoi(U8 *str);
+#else
+public U64 StrLen(U8 *buf);
+public I64 StrNCmp(U8 *s1, U8 *s2, I64 len);
+public I64 StrNICmp(U8 *s1, U8 *s2, I64 len);
+public I64 StrCmp(U8 *s1, U8 *s2);
+public U0 StrCpy(U8 *dst, U8 *src);
+public U8 ToLower(U8 ch);
+public U8 ToUpper(U8 ch);
+public Bool IsSpace(U8 ch);
+public U64 StrHash(U8 *str);
+public I64 Atoi(U8 *str);
+#endif
 
 public U8 *StrNCpy(U8 *buf, I64 len);
 public U8 *FileExtDot(U8 *src);
@@ -622,6 +656,7 @@ public U8 *MPrintDate(CDate cdt);
 public U8 *MPrintTime(CDate cdt);
 public U8 *MPrintTimestampNow();
 public U8 *StrNew(U8 *buf);
+public U8 *StrTok(U8 *str, U8 *delim);
 public U8 *StrFirstRem(U8 *src, U8 *marker, U8 *dst = NULL);
 public I64 StrIntToHex(U8 *dst, I64 num);
 public U8 *MPrintQ(U8 *ptr, I64 flags = 0);

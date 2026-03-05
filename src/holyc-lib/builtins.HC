@@ -6,6 +6,7 @@
 /* Yup we can mix #define's and assembly */
 #define ALIGN_16 0xFFFFFFFFFFFFFFF0
 
+#ifdef IS_X86_64
 asm {
 /* Read a file storing the length into the RDX */
 _READ_FILE::
@@ -41,22 +42,28 @@ _READ_FILE::
     ADDQ    RSP, 48
     LEAVE
     RET
-
-//_U64_MOD::
-//    PUSHQ   RBP
-//    MOVQ    RBP, RSP
-//    MOVQ    RDX,0
-//    CQTO
-//    MOVQ    RDX,RSI
-//    MOVQ    RAX,RDI
-//    DIV     RBX
-//    MOVQ    RAX,RDX
-//    LEAVE
-//    RET
 }
 
 public _extern _READ_FILE U8 *FileRead(U8 *name, I64 max_size, I64 *_len);
-//public _extern _U64_MOD I64 ModU64(U64 num, U64 n);
+
+#else
+
+public U8 *FileRead(U8 *name, I64 max_size, I64 *_len) {
+  I32 fd = open(name, 0); // O_RDONLY
+  if (fd < 0) return NULL;
+  U8 *buf = MAlloc(max_size + 1);
+  I64 bytes_read = read(fd, buf, max_size);
+  close(fd);
+  if (bytes_read < 0) {
+    Free(buf);
+    return NULL;
+  }
+  buf[bytes_read] = '\0';
+  if (_len) *_len = bytes_read;
+  return buf;
+}
+
+#endif
 
 public U64 MemAddr(U0 *ptr)
 {

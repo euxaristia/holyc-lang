@@ -59,6 +59,7 @@ public Bool WildMatch(U8 *test_str, U8 *wild_str);
 
 #define TIMESTAMP_FMT "%d-%02d-%02d %02d:%02d:%02d"
 
+#ifdef IS_X86_64
 asm {
 // RDI=s1, RSI=s2, RDX=N
 // 'a'=97, 'z'=122
@@ -286,6 +287,65 @@ public _extern _TOUPPER U8 ToUpper(U8 ch);
 public _extern _ISSPACE Bool IsSpace(U8 ch);
 public _extern _STRHASH U64 StrHash(U8 *str);
 public _extern _ATOI I64 Atoi(U8 *str);
+
+#else
+
+public U64 StrLen(U8 *buf) {
+  return strlen(buf);
+}
+
+public I64 StrNCmp(U8 *s1, U8 *s2, I64 len) {
+  return strncmp(s1, s2, len);
+}
+
+public I64 StrNICmp(U8 *s1, U8 *s2, I64 len) {
+  /* Simple implementation */
+  while (len > 0) {
+    if (tolower(*s1) != tolower(*s2)) {
+      return tolower(*s1) - tolower(*s2);
+    }
+    if (!*s1) break;
+    s1++;
+    s2++;
+    len--;
+  }
+  return 0;
+}
+
+public I64 StrCmp(U8 *s1, U8 *s2) {
+  return strcmp(s1, s2);
+}
+
+public U0 StrCpy(U8 *dst, U8 *src) {
+  strcpy(dst, src);
+}
+
+public U8 ToLower(U8 ch) {
+  return tolower(ch);
+}
+
+public U8 ToUpper(U8 ch) {
+  return toupper(ch);
+}
+
+public Bool IsSpace(U8 ch) {
+  return isspace(ch) != 0;
+}
+
+public U64 StrHash(U8 *str) {
+  U64 res = 0;
+  while (*str) {
+    res = res * 31 + *str;
+    str++;
+  }
+  return res;
+}
+
+public I64 Atoi(U8 *str) {
+  return strtoll(str, NULL, 10);
+}
+
+#endif
 
 public U8 *StrNCpy(U8 *buf, I64 len)
 {
@@ -1246,4 +1306,29 @@ Bool WildMatch(U8 *test_str, U8 *wild_str)
       }
     }
   }
+}
+
+static U8 *strtok_ptr = NULL;
+public U8 *StrTok(U8 *str, U8 *delim) {
+  if (str) strtok_ptr = str;
+  if (!strtok_ptr) return NULL;
+
+  U8 *start = strtok_ptr;
+  /* Skip leading delimiters */
+  while (*start && StrOcc(delim, *start)) start++;
+  if (!*start) {
+    strtok_ptr = NULL;
+    return NULL;
+  }
+
+  U8 *end = start;
+  while (*end && !StrOcc(delim, *end)) end++;
+  
+  if (*end) {
+    *end = 0;
+    strtok_ptr = end + 1;
+  } else {
+    strtok_ptr = NULL;
+  }
+  return start;
 }

@@ -62,11 +62,13 @@ void aarch64ClearIntRegisters(AArch64Ctx *ctx) {
 }
 
 u32 aarch64CtxGetVarOffset(AArch64Ctx *ctx, u32 var_id) {
-    return (u32)(u64)(void *)mapGetInt(ctx->var_offsets, var_id);
+    void *val = mapGetInt(ctx->var_offsets, var_id);
+    if (val == NULL) return 0xffffffff;
+    return (u32)(u64)val - 1;
 }
 
 void aarch64CtxSetVarOffset(AArch64Ctx *ctx, u32 var_id, u32 offset) {
-    mapAddIntOrErr(ctx->var_offsets, var_id, (void *)(u64)offset);
+    mapAddIntOrErr(ctx->var_offsets, var_id, (void *)(u64)(offset + 1));
 }
 
 u32 aarch64GetFreeReg(AArch64Ctx *ctx) {
@@ -231,7 +233,7 @@ static void aarch64LoadStackSlotAddress(AArch64Ctx *ctx, IrValue *value, u32 reg
                 irValueKindToString(value->kind));
     }
     u32 offset = aarch64CtxGetVarOffset(ctx, value->as.var.id);
-    assert(offset != 0 || ctx->stack_size == 0);
+    assert(offset != 0xffffffff || ctx->stack_size == 0);
     aarch64AddLocalStackOffset(ctx, 14, 15, offset);
     aoStrCatFmt(ctx->buf, "mov x%u, x14\n\t", reg);
 }
@@ -304,7 +306,7 @@ static void aarch64EmitGlobals(AArch64Ctx *ctx) {
                               "%S:\n",
                 global->as.global.name);
         if (global->as.global.value->kind == IR_VAL_CONST_INT) {
-            aoStrCatFmt(ctx->buf, "\t.quad %lld\n", global->as.global.value->as._i64);
+            aoStrCatFmt(ctx->buf, "\t.quad %I\n", global->as.global.value->as._i64);
         } else if (global->as.global.value->kind == IR_VAL_CONST_STR &&
                    global->as.global.value->as.str.label) {
             aoStrCatFmt(ctx->buf, "\t.quad %S\n", global->as.global.value->as.str.label);
@@ -332,7 +334,7 @@ void aarch64LoadIntValue(AArch64Ctx *ctx, IrValue *value, u32 reg) {
         case IR_VAL_PARAM:
         case IR_VAL_TMP: {
             u32 offset = aarch64CtxGetVarOffset(ctx, value->as.var.id);
-            assert(offset != 0 || ctx->stack_size == 0);
+            assert(offset != 0xffffffff || ctx->stack_size == 0);
             aarch64AddLocalStackOffset(ctx, 14, 15, offset);
             if ((value->flags & IR_VALUE_FLAG_ADDRESS) &&
                 ((value->kind == IR_VAL_LOCAL || value->kind == IR_VAL_PARAM) ||
@@ -420,7 +422,7 @@ void aarch64StoreIntValue(AArch64Ctx *ctx, IrValue *dest, u32 reg) {
         return;
     }
     u32 offset = aarch64CtxGetVarOffset(ctx, dest->as.var.id);
-    assert(offset != 0 || ctx->stack_size == 0);
+    assert(offset != 0xffffffff || ctx->stack_size == 0);
     aarch64AddLocalStackOffset(ctx, 14, 15, offset);
     switch (dest->type) {
         case IR_TYPE_I8:
@@ -462,7 +464,7 @@ void aarch64LoadFloatValue(AArch64Ctx *ctx, IrValue *value, u32 reg) {
         case IR_VAL_PARAM:
         case IR_VAL_TMP: {
             u32 offset = aarch64CtxGetVarOffset(ctx, value->as.var.id);
-            assert(offset != 0 || ctx->stack_size == 0);
+            assert(offset != 0xffffffff || ctx->stack_size == 0);
             aarch64AddLocalStackOffset(ctx, 14, 15, offset);
             aoStrCatFmt(ctx->buf, "ldr d%u, [x14]\n\t", reg);
             return;
@@ -497,7 +499,7 @@ void aarch64StoreFloatValue(AArch64Ctx *ctx, IrValue *dest, u32 reg) {
         return;
     }
     u32 offset = aarch64CtxGetVarOffset(ctx, dest->as.var.id);
-    assert(offset != 0 || ctx->stack_size == 0);
+    assert(offset != 0xffffffff || ctx->stack_size == 0);
     aarch64AddLocalStackOffset(ctx, 14, 15, offset);
     aoStrCatFmt(ctx->buf, "str d%u, [x14]\n\t", reg);
 }
@@ -1147,9 +1149,19 @@ void aarch64EmitFunction(AArch64Ctx *ctx, IrFunction *func) {
 
     setRelease(ctx->alloca_tmps);
     ctx->alloca_tmps = setNew(64, &set_uint_type);
+    mapClear(ctx->var_offsets);
 
     u32 required_stack_size = 0;
     Map *extra_tmps = mapNew(32, &map_uint_to_uint_type);
+
+    if (func->return_value && func->return_value->kind == IR_VAL_TMP) {
+        u32 id = func->return_value->as.var.id;
+        u32 raw_size = func->return_value->as.var.size ? func->return_value->as.var.size : 8;
+        u32 var_size = (u32)alignTo((int)raw_size, 8);
+        mapAddIntOrErr(extra_tmps, id, (void *)(u64)var_size);
+        required_stack_size += var_size;
+    }
+
     MapIter var_it;
     mapIterInit(func->variables, &var_it);
     while (mapIterNext(&var_it)) {
@@ -1178,6 +1190,44 @@ void aarch64EmitFunction(AArch64Ctx *ctx, IrFunction *func) {
                 u32 var_size = (u32)alignTo((int)raw_size, 8);
                 mapAddIntOrErr(extra_tmps, id, (void *)(u64)var_size);
                 required_stack_size += var_size;
+            }
+
+            if (instr->op == IR_CALL && instr->r1 && instr->r1->type == IR_TYPE_ARRAY) {
+                IrValueArray *args = &instr->r1->as.array;
+                for (u64 i = 0; i < args->values->size; ++i) {
+                    IrValue *val = vecGet(IrValue *, args->values, i);
+                    if (!val || val->kind != IR_VAL_TMP) continue;
+                    u32 id = val->as.var.id;
+                    if (mapHasInt(func->variables, id) || mapHasInt(extra_tmps, id)) continue;
+                    u32 raw_size = val->as.var.size ? val->as.var.size : 8;
+                    u32 var_size = (u32)alignTo((int)raw_size, 8);
+                    mapAddIntOrErr(extra_tmps, id, (void *)(u64)var_size);
+                    required_stack_size += var_size;
+                }
+            } else if (instr->op == IR_SWITCH && instr->extra.cases) {
+                listForEach(instr->extra.cases) {
+                    IrPair *pair = listValue(IrPair *, it);
+                    IrValue *val = pair->ir_value;
+                    if (!val || val->kind != IR_VAL_TMP) continue;
+                    u32 id = val->as.var.id;
+                    if (mapHasInt(func->variables, id) || mapHasInt(extra_tmps, id)) continue;
+                    u32 raw_size = val->as.var.size ? val->as.var.size : 8;
+                    u32 var_size = (u32)alignTo((int)raw_size, 8);
+                    mapAddIntOrErr(extra_tmps, id, (void *)(u64)var_size);
+                    required_stack_size += var_size;
+                }
+            } else if (instr->op == IR_PHI && instr->extra.phi_pairs) {
+                for (u64 i = 0; i < instr->extra.phi_pairs->size; ++i) {
+                    IrPair *pair = vecGet(IrPair *, instr->extra.phi_pairs, i);
+                    IrValue *val = pair->ir_value;
+                    if (!val || val->kind != IR_VAL_TMP) continue;
+                    u32 id = val->as.var.id;
+                    if (mapHasInt(func->variables, id) || mapHasInt(extra_tmps, id)) continue;
+                    u32 raw_size = val->as.var.size ? val->as.var.size : 8;
+                    u32 var_size = (u32)alignTo((int)raw_size, 8);
+                    mapAddIntOrErr(extra_tmps, id, (void *)(u64)var_size);
+                    required_stack_size += var_size;
+                }
             }
         }
     }

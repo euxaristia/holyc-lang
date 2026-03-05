@@ -14,6 +14,24 @@ static Arena ir_arena;
 static int ir_arena_init = 0;
 #define IR_VALUE_FLAG_ADDRESS (1ULL << 0)
 #define IR_VALUE_FLAG_DEREF   (1ULL << 1)
+#define IR_VALUE_POINTEE_SHIFT 56
+#define IR_VALUE_POINTEE_MASK  (0xFFULL << IR_VALUE_POINTEE_SHIFT)
+
+static IrValueType irGetAddressPointeeType(IrValue *value) {
+    if (!value) return IR_TYPE_VOID;
+    u64 encoded = (value->flags & IR_VALUE_POINTEE_MASK) >> IR_VALUE_POINTEE_SHIFT;
+    if (!encoded) return IR_TYPE_VOID;
+    if (encoded > (u64)IR_TYPE_LABEL) return IR_TYPE_VOID;
+    return (IrValueType)encoded;
+}
+
+static void irSetAddressPointeeType(IrValue *value, IrValueType type) {
+    if (!value) return;
+    value->flags &= ~IR_VALUE_POINTEE_MASK;
+    if (type != IR_TYPE_VOID) {
+        value->flags |= ((u64)type << IR_VALUE_POINTEE_SHIFT) & IR_VALUE_POINTEE_MASK;
+    }
+}
 
 void irMemoryInit(void) {
     if (!ir_arena_init) {
@@ -524,6 +542,9 @@ static IrValue *irGlobalAddress(Ast *ast) {
         global->as.global.name = ast->gname;
     }
     global->as.global.value = NULL;
+    if (ast && ast->type) {
+        irSetAddressPointeeType(global, irConvertType(ast->type));
+    }
     return global;
 }
 
@@ -543,6 +564,7 @@ static IrValue *irAddressView(IrValue *base) {
     IrValue *addr = irValueNew(base->type, base->kind);
     memcpy(addr, base, sizeof(IrValue));
     addr->flags |= IR_VALUE_FLAG_ADDRESS;
+    irSetAddressPointeeType(addr, base->type);
     return addr;
 }
 
@@ -650,7 +672,16 @@ static IrValue *irExprAddress(IrCtx *ctx, Ast *ast) {
         case AST_UNOP:
             if (ast->unop == AST_UN_OP_DEREF) {
                 IrValue *addr = irExpr(ctx, ast->operand);
-                return irDerefAddressView(addr);
+                IrValue *deref = irDerefAddressView(addr);
+                if (ast->type) {
+                    irSetAddressPointeeType(deref, irConvertType(ast->type));
+                } else {
+                    IrValueType pointee = irGetAddressPointeeType(addr);
+                    if (pointee != IR_TYPE_VOID) {
+                        irSetAddressPointeeType(deref, pointee);
+                    }
+                }
+                return deref;
             }
             break;
         case AST_GVAR:
@@ -680,13 +711,20 @@ static IrValue *irExprAddress(IrCtx *ctx, Ast *ast) {
             int offset = ast->type ? ast->type->offset : 0;
             if (offset == 0) {
                 if (cls_is_ptr) {
-                    return irDerefAddressView(base);
+                    IrValue *deref = irDerefAddressView(base);
+                    if (ast->type) {
+                        irSetAddressPointeeType(deref, irConvertType(ast->type));
+                    }
+                    return deref;
                 }
                 return base;
             }
 
             IrValue *addr = irTmp(IR_TYPE_PTR, 8);
             addr->flags |= IR_VALUE_FLAG_ADDRESS;
+            if (ast->type) {
+                irSetAddressPointeeType(addr, irConvertType(ast->type));
+            }
             IrInstr *add = irInstrNew(IR_IADD, addr, base, irConstInt(IR_TYPE_I64, offset));
             irBlockAddInstr(ctx, add);
             return addr;
@@ -834,8 +872,8 @@ IrValue *irBinOpExpr(IrCtx *ctx, Ast *ast) {
     /* Lower pointer arithmetic with explicit scaling while we still have AST types. */
     if ((ast->binop == AST_BIN_OP_ADD || ast->binop == AST_BIN_OP_SUB) &&
         ast->left && ast->right) {
-        int lhs_is_ptr = astTypeIsPtr(ast->left->type);
-        int rhs_is_ptr = astTypeIsPtr(ast->right->type);
+        int lhs_is_ptr = astTypeIsPtr(ast->left->type) || astTypeIsArray(ast->left->type);
+        int rhs_is_ptr = astTypeIsPtr(ast->right->type) || astTypeIsArray(ast->right->type);
         int lhs_is_int = astIsIntType(ast->left->type) || ast->left->type->kind == AST_TYPE_CHAR;
         int rhs_is_int = astIsIntType(ast->right->type) || ast->right->type->kind == AST_TYPE_CHAR;
 
@@ -1336,6 +1374,45 @@ IrValue *irExpr(IrCtx *ctx, Ast *ast) {
     }
 }
 
+static void irLowerArrayInit(IrCtx *ctx, IrValue *base_addr, Ast *init, AstType *type, int offset) {
+    if (!init || init->kind != AST_ARRAY_INIT) return;
+    int i = 0;
+    listForEach(init->arrayinit) {
+        Ast *elem = (Ast *)it->value;
+        AstType *elem_type = NULL;
+        int elem_offset = 0;
+
+        if (type->kind == AST_TYPE_CLASS || type->kind == AST_TYPE_UNION) {
+            if (i < (int)type->fields->indexes->size) {
+                u64 field_idx = (u64)type->fields->indexes->entries[i];
+                MapNode *node = &type->fields->entries[field_idx];
+                elem_type = (AstType *)node->value;
+                elem_offset = offset + elem_type->offset;
+            } else {
+                loggerWarning("IR lowering: too many initializers for class %s\n", 
+                        type->clsname ? type->clsname->data : "anonymous");
+                return;
+            }
+        } else {
+            elem_type = type->ptr;
+            elem_offset = offset + i * (elem_type ? elem_type->size : 8);
+        }
+
+        if (elem->kind == AST_ARRAY_INIT) {
+            irLowerArrayInit(ctx, base_addr, elem, elem_type, elem_offset);
+        } else {
+            IrValue *val = irExpr(ctx, elem);
+            IrValue *addr = irTmp(IR_TYPE_PTR, 8);
+            addr->flags |= IR_VALUE_FLAG_ADDRESS;
+            irSetAddressPointeeType(addr, irConvertType(elem_type));
+            IrInstr *gep = irInstrNew(IR_IADD, addr, base_addr, irConstInt(IR_TYPE_I64, elem_offset));
+            irBlockAddInstr(ctx, gep);
+            irBlockAddInstr(ctx, irStore(addr, val));
+        }
+        i++;
+    }
+}
+
 void irLowerAst(IrCtx *ctx, Ast *ast) {
     if (!ast) return;
 
@@ -1372,8 +1449,7 @@ void irLowerAst(IrCtx *ctx, Ast *ast) {
 
                 switch (init->kind) {
                     case AST_ARRAY_INIT: {
-                        loggerWarning("IR lowering: array initializer for local `%s` is not fully implemented\n",
-                                astLValueToString(var, 0));
+                        irLowerArrayInit(ctx, irAddressView(local), init, var->type, 0);
                         break;
                     }
 
