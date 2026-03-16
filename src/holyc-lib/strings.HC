@@ -290,6 +290,14 @@ public _extern _ATOI I64 Atoi(U8 *str);
 
 #else
 
+public _extern _STRLEN U64 strlen(U8 *buf);
+public _extern _STRNCMP I64 strncmp(U8 *s1, U8 *s2, I64 len);
+public _extern _STRCMP I64 strcmp(U8 *s1, U8 *s2);
+public _extern _STRCPY U0 strcpy(U8 *dst, U8 *src);
+public _extern _TOLOWER I64 tolower(I64 ch);
+public _extern _TOUPPER I64 toupper(I64 ch);
+public _extern _ISSPACE I64 isspace(I64 ch);
+
 public U64 StrLen(U8 *buf) {
   return strlen(buf);
 }
@@ -301,8 +309,8 @@ public I64 StrNCmp(U8 *s1, U8 *s2, I64 len) {
 public I64 StrNICmp(U8 *s1, U8 *s2, I64 len) {
   /* Simple implementation */
   while (len > 0) {
-    if (tolower(*s1) != tolower(*s2)) {
-      return tolower(*s1) - tolower(*s2);
+    if (ToLower(*s1) != ToLower(*s2)) {
+      return ToLower(*s1) - ToLower(*s2);
     }
     if (!*s1) break;
     s1++;
